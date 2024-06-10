@@ -1,0 +1,105 @@
+'base_date': '2005-01-01'
+'crsp_columns':
+    - 'gvkey'
+    - 'tic'
+    - 'datadate'
+    - 'fyearq'
+    - 'fqtr'
+    - 'datafmt'
+    - 'indfmt'
+    - 'rdq' # report date of earnings
+    # Income Statement Data
+    - 'saleq' # Sales/Revenue (total)
+    - 'cogsq'  # Cost of goods sold
+    - 'xsgaq' # SGA Costs
+    #- 'oibdpq' # Operating Income before Depreciation and Amortization (measure of EBITDA)
+    - 'niq' # Net income
+    - 'dpq' # Depreciation and amortization costs
+    - 'txtq' # Total taxes
+    - 'xintq' # Total interest
+    # Balance Sheet Data
+    # Assets
+    - 'cheq' # Cash and Equivalents (Cash + Short-Term Investments)
+    - 'invtq' # Inventory
+    - 'rectq' # Total receivables
+    - 'actq' # Total current assets
+    - 'ppentq' # Property Plant and Equipment - Total (Net)
+    - 'atq' # Total assets
+    # Liabilities
+    - 'lctq' # Total current liabilities
+    - 'dlttq' # Total long term Debt
+    - 'ltq' # Total liabilities,
+    - 'seqq' # Total Shareholders Equity
+    - 'req' # Retained Earnings
+    # Cash Flow Statement
+    - 'oancfy' # Cumulative Yearly CF from Operating Activities
+    - 'ivncfy' # Cumulative Yealy CF from Investing Activities
+    - 'fincfy' # Cumulative Yealy CF from Financial Activities
+    # Others
+    - 'icaptq' # Invested capital
+    - 'capxy' # Capital Expenditures
+    - 'cshoq' # Common Shares Outstanding
+    #- 'dvpq' # Preferred Div
+    - 'dvy' # Cash Dividend Value
+    - 'epspiq'
+    - 'epsfiq'
+    - 'epsfi12'
+'macrotrends':
+    'income_statement':
+        'field_name': 'datadate'
+        'Revenue': 'saleq'
+        'Cost Of Goods Sold': 'cogsq'
+        'SG&A Expenses': 'xsgaq'
+        'Net Income': 'niq'
+        'EBITDA': 'ebitdaq'
+        'Shares Outstanding': 'cshoq'
+    'balance_sheet':
+        'field_name': 'datadate'
+        'Total Current Assets': 'actq'
+        'Total Assets': 'atq'
+        'Cash On Hand': 'cheq'
+        'Receivables': 'rectq'
+        'Inventory': 'invtq'
+        'Property, Plant, And Equipment': 'ppentq'
+        'Total Current Liabilities': 'lctq'
+        'Long Term Debt': 'dlttq'
+        'Total Liabilities': 'ltq'
+        'Retained Earnings (Accumulated Deficit)': 'req'
+        'Share Holder Equity': 'seqq'
+    'cash_flow':
+        'field_name': 'datadate'
+        'Cash Flow From Operating Activities': 'oancfq'
+        'Cash Flow From Investing Activities': 'ivncfq'
+        'Cash Flow From Financial Activities': 'fincfq'
+        'Common Stock Dividends Paid': 'dvq'
+    'ratios':
+        'field_name': 'datadate'
+        'ROI - Return On Investment': 'icaptq'
+'yahoo':
+    'index': 'datadate'
+    'Total Revenue': 'saleq'
+    'Cost Of Revenue': 'cogsq'
+    'Selling General And Administration': 'xsgaq'
+    'Net Income': 'niq'
+    'Normalized EBITDA': 'ebitdaq'
+    'Ordinary Shares Number': 'cshoq'
+    'Current Assets': 'actq'
+    'Total Assets': 'atq'
+    'Cash Cash Equivalents And Short Term Investments': 'cheq'
+    'Receivables': 'rectq'
+    'Inventory': 'invtq'
+    'Net PPE': 'ppentq'
+    'Current Liabilities': 'lctq'
+    'Long Term Debt': 'dlttq'
+    'Total Liabilities Net Minority Interest': 'ltq'
+    'Retained Earnings': 'req'
+    'Stockholders Equity': 'seqq'
+    'Operating Cash Flow': 'oancfq'
+    'Investing Cash Flow': 'ivncfq'
+    'Financing Cash Flow': 'fincfq'
+    'Common Stock Dividend Paid': 'dvq'
+    'Capital Expenditure': 'capxq'
+    'Invested Capital': 'icaptq'
+'variables':
+    - 'roa'
+    - 'roe'
