@@ -1,9 +1,9 @@
 import os
 import datetime
-from loguru import logger
-from pathlib import Path
 import numpy as np
 import pandas as pd
+from loguru import logger
+from pathlib import Path
 
 import utils.market_scraper as ms
 from config import get_config_dict
@@ -16,33 +16,42 @@ class Stock:
 
     def __init__(self, tic):
         self.tic = tic
+        self.name = None
         self.sector = None
+        self.subsector = None
+        self.founded = None
         self.crsp_fields = get_config_dict("data")["crsp_columns"]
         self.base_date = get_config_dict("data")["base_date"]
-        self.update_date = None
+        self.fin_last_update = None
+        self.mkt_last_update = None
         self.data_path = None
-        self._add_sector()
+        self._add_information()
         self._initialize_stock()
 
-    def _add_sector(self):
+    def _add_information(self):
         """
-        Add sector information to stock, from persistent database.
+        Add details and information on stock.
         """
 
-        # Read industry sector data (GICS terminology)
-        sector_data = pd.read_csv(
+        # read industry sector data (GICS terminology)
+        control_df = pd.read_csv(
             './data/1_work_data/SP500.csv',
             sep=';',
-            usecols=['Symbol', 'Sector']
         )
+        
         try:
-            self.sector = sector_data.loc[
-                sector_data.Symbol == self.tic,
-                'Sector'
-            ].values[0]
+            stock_details = control_df.loc[
+                control_df.Symbol == self.tic,
+                ['Security', 'Sector', 'Sub-Sector', 'Founded']
+            ].values
+            
+            self.name = stock_details[0, 0]
+            self.sector = stock_details[0, 1]
+            self.subsector = stock_details[0, 2]
+            self.founded = stock_details[0, 3]
+            
         except Exception:
-            logger.error(f"{self.tic} add_sector FAILED")
-            self.sector = None
+            logger.error(f"{self.tic} add_info FAILED")
 
     def _initialize_stock(self):
         """
@@ -67,15 +76,19 @@ class Stock:
             # retrieve and save historical financial data and store last update date
             self._retrieve_historical_fundamental_data()
             self._retrieve_historical_market_data()
+            self._retrieve_historical_insider_data()
+            self.retrieve_insider_data(update=False)
             
         else:
             # gather date of last update
-            curr_f_data_name = list(self.data_path.glob('fundamentals_*.csv'))[0]
-            date = datetime.datetime.strptime(curr_f_data_name.stem.split('_')[1], '%Y-%m-%d').date()
+            fun_filename = list(self.data_path.glob('fundamentals_*.csv'))[0]
+            mkt_filename = list(self.data_path.glob('market_*.csv'))[0]
             
             # store date of last update
-            self.update_date = date
-            logger.info(f"repository for {self.tic} exists ({self.update_date})")
+            self.fin_last_update = datetime.datetime.strptime(fun_filename.stem.split('_')[1], '%Y-%m-%d').date()
+            self.mkt_last_update = datetime.datetime.strptime(mkt_filename.stem.split('_')[1], '%Y-%m-%d').date()
+            
+            logger.info(f"repository for {self.tic} exists ({self.mkt_last_update})")
             
     def _retrieve_historical_fundamental_data(self):
         """
@@ -138,42 +151,54 @@ class Stock:
                 raise Exception("Empty DataFrame")
             
             # store date of last update
-            self.update_date = df['rdq'].dt.date.max()
-            df.to_csv(self.data_path / f'fundamentals_{self.update_date}.csv', index=False)
-            logger.info(f"retrieved crsp historical data for {self.tic} ({self.update_date})")
+            self.fin_last_update = df['rdq'].dt.date.max()
+            
+            # save data
+            df.to_csv(self.data_path / f'fundamentals_{self.fin_last_update}.csv', index=False)
+            
+            logger.info(f"retrieved crsp historical data for {self.tic} ({self.fin_last_update})")
         
         except Exception:
+            
             # if no data was found create an empty df as placeholder
             df = pd.DataFrame(columns=df.columns)
+            
             # reset date to default
-            self.update_date = datetime.datetime.strptime(self.base_date, '%Y-%m-%d').date()
-            df.to_csv(self.data_path / f'fundamentals_{self.update_date}.csv', index=False)
+            self.fin_last_update = datetime.datetime.strptime(self.base_date, '%Y-%m-%d').date()
+            
+            # save data 
+            df.to_csv(self.data_path / f'fundamentals_{self.fin_last_update}.csv', index=False)
+            
             logger.warning(f"no crsp historical data found for {self.tic}")
             
     def _retrieve_historical_market_data(self):
-        """
-        Retrieve market data from 
-        """
         
         try:
             # set end date to present
             end_date = datetime.datetime.now().strftime('%Y-%m-%d')
+            
             # scrape market data
             data = ms.get_market_data(
                 self.tic, 
                 start=self.base_date,
                 end=end_date
             )
+            
+            # store date of last update
+            self.mkt_last_update = data['Date'].dt.date.max()
+            
             # save as csv
-            data.to_csv(self.data_path / f'market_{end_date}.csv', index=False)
-            logger.info(f"historical market data found on yahoo for {self.tic} ({end_date})")
+            data.to_csv(self.data_path / f'market_{self.mkt_last_update}.csv', index=False)
+            logger.info(f"historical market data found on yahoo for {self.tic} ({self.mkt_last_update})")
             
         except Exception:
             # try on local DB 
             try:            
                 # retrieve CRSP data
-                market_data = pd.read_csv('./data/0_raw_data/prices_2005-01-01_2018-12-31.csv', 
-                                        header=[0,1]).loc[1:]
+                market_data = pd.read_csv(
+                    './data/0_raw_data/prices_2005-01-01_2018-12-31.csv', 
+                    header=[0,1]
+                ).loc[1:]
                 
                 # store single stock data 
                 data = pd.DataFrame(columns=['Date', 'Close', 'Adj Close', 'Volume'])
@@ -183,18 +208,19 @@ class Stock:
                 data['Volume'] = market_data['Volume'][self.tic].astype(int, errors='ignore')
                 
                 # get last price date
-                update_date = pd.to_datetime(data['Date']).dt.date.max()
+                self.mkt_last_update = pd.to_datetime(data['Date']).dt.date.max()
                 
                 # save as csv
-                data.to_csv(self.data_path / f'market_{update_date}.csv', index=False)
-                logger.info(f"historical market data found on db for {self.tic} ({update_date})")
+                data.to_csv(self.data_path / f'market_{self.mkt_last_update}.csv', index=False)
+                logger.info(f"historical market data found on db for {self.tic} ({self.mkt_last_update})")
                 
             except Exception:
                 logger.warning(f"no market data available for {self.tic}")
                 data = pd.DataFrame(columns=['Date', 'Close', 'Adj Close', 'Volume'])
+                self.mkt_last_update = self.base_date
                 data.to_csv(self.data_path / f'market_{self.base_date}.csv', index=False)
-        
-    def _update_fundamental_data(self, method):
+                        
+    def update_fundamental_data(self, method):
         """
         Update fundamental data, by retrieving financial reports released
         after previous updates.
@@ -205,13 +231,14 @@ class Stock:
         Returns:
             bool: Success status.
         """
-        
+                
         try:
             # get current path
             curr_data_name = list(self.data_path.glob('fundamentals_*.csv'))[0]
-            # extract date of last update, convert to dt and add 1 day
+            
+            # extract date of last update and add 1 day
             start_dt = (datetime.datetime.combine(
-                self.update_date,
+                self.fin_last_update,
                 datetime.datetime.min.time()
                 ) + datetime.timedelta(days=1)
             )
@@ -223,13 +250,14 @@ class Stock:
         end_dt = datetime.datetime.now()
         
         # check if earnings season is possible
-        if end_dt - start_dt < datetime.timedelta(days=75):
+        if (end_dt - start_dt) < datetime.timedelta(days=75):
             logger.info(f'financial data already updated for {self.tic} ({end_dt})')
             return False
         
         try:
             # update via macrotrends
             if method == 'mt': 
+                
                 # scrape and merge 3 main documents
                 df_is =  ms.scrape_income_statement_mt(self.tic, start_dt, end_dt)
                 df_bs =  ms.scrape_balance_sheet_mt(self.tic, start_dt, end_dt)
@@ -257,8 +285,10 @@ class Stock:
             df = df.drop_duplicates(subset=['datadate']).sort_values(by=['datadate'])
             df.sort_values(by=['datadate'], inplace=True)
             
-            # get earnings dates
+            # get earnings dates and estimates
             earn_dates = ms.get_earnings_dates(self.tic, start_dt, end_dt)
+            
+            # merge data
             df = pd.merge_asof(
                 df, 
                 earn_dates, 
@@ -267,6 +297,7 @@ class Stock:
                 direction='forward',
                 tolerance=datetime.timedelta(days=80)
             )
+            
             # retrieve outdated fundamental data
             old_data = pd.read_csv(curr_data_name)
             df = pd.concat([old_data, df]).reset_index(drop=True)
@@ -282,10 +313,12 @@ class Stock:
             df = df.round(3)
                         
             # set update date
-            self.update_date = df['rdq'].dt.date.max()
+            self.fin_last_update = df['rdq'].dt.date.max()
+            
+            # save data
             df.to_csv(
                 self.data_path /
-                f'fundamentals_{self.update_date}.csv',
+                f'fundamentals_{self.fin_last_update}.csv',
                 index=False
             )
             # remove outdated data
@@ -298,14 +331,29 @@ class Stock:
             logger.warning(f'failed to update financial data ({method}) for {self.tic} ({end_dt})')
             return False
         
-    def _update_market_data(self):
+    def update_market_data(self):
+        """
+        Updata market data (price and volume).
+        TODO: scrape only missing data (from last update till present)
+        and adjust past data if any split happened in meantime.
+
+        Returns
+        -------
+        bool
+            Signals success of update.
+
+        Raises
+        ------
+        Exception
+            No data is available.
+        """
         
         # get current path
-        curr_data_name = list(self.data_path.glob('market_*.csv'))[0]
+        mkt_filename = list(self.data_path.glob('market_*.csv'))[0]
         
         # extract date of last update
         last_update_date = datetime.datetime.strptime(
-            curr_data_name.stem.split('_')[1], 
+            mkt_filename.stem.split('_')[1], 
             '%Y-%m-%d'
         ).date()
         
@@ -313,11 +361,15 @@ class Stock:
         end_date = datetime.datetime.now().strftime('%Y-%m-%d')
         
         try:
-            if last_update_date > self.update_date:
+            if datetime.datetime.now().date() <= self.mkt_last_update:
                 raise Exception("no market data to update.")
             
             # scrape market data
-            data = ms.get_market_data(self.tic, self.base_date, end_date)
+            data = ms.get_market_data(
+                self.tic,
+                self.base_date,
+                end_date
+            )
                         
             # save updated df
             data.to_csv(
@@ -326,17 +378,63 @@ class Stock:
                 index=False
             )
             
+            self.mkt_last_update = data['Date'].dt.date.max()
+            
             # replace outdated data
-            if os.path.exists(curr_data_name):
-                os.remove(curr_data_name)
+            if os.path.exists(mkt_filename):
+                os.remove(mkt_filename)
                 
-            logger.info(f"updated market data for {self.tic} ({end_date})")
+            logger.info(f"updated market data for {self.tic} ({self.mkt_last_update})")
             
             return True
         
         except Exception:
             logger.warning(f"no market data to update for {self.tic}")
+            return False
+        
+    def retrieve_insider_data(self, update=False):
+        """
+        Get insider trading data.
+        """
+                      
+        # set end date to present
+        end_date = datetime.datetime.now().strftime('%Y-%m-%d')
+        
+        try:
+            # scrape insider data
+            data = ms.get_stock_insider_data(self.tic)
             
+            if update:
+                
+                # get historical insider trades
+                insider_filename = list(self.data_path.glob('insider_*.csv'))[0]
+                old_data = pd.read_csv(insider_filename)
+
+                # join
+                data = pd.concat([old_data, data]).reset_index(drop=True)
+            
+                # update
+                data = data.drop_duplicates(subset=['filling_date', 'owner_name', 'transaction_type'], keep='last')
+                
+                # replace outdated data
+                if os.path.exists(insider_filename):
+                    os.remove(insider_filename)
+                    
+                logger.info(f"updated insider trading data for {self.tic} ({end_date})")
+            else:
+                logger.info(f"created insider trading data for {self.tic} ({end_date})")
+                             
+            # save updated df
+            data.to_csv(
+                self.data_path /
+                f'insider_{end_date}.csv', 
+                index=False
+            )
+            
+            return True
+        
+        except Exception:
+            logger.warning(f"no insider trading data found for {self.tic}")
             return False
             
     def update_stock_data(self, method='yh'):
@@ -344,10 +442,13 @@ class Stock:
         logger.info(f"updating {self.tic} stock data")
         
         # update financial data
-        self._update_fundamental_data(method)
+        self.update_fundamental_data(method)
         
         # update market data
-        self._update_market_data()
+        self.update_market_data()
+        
+        # update insider trading data
+        self.retrieve_insider_data(update=True)
           
     def correct_data(self):
         
@@ -413,6 +514,16 @@ class Stock:
         )    
         return df
     
+    def get_insider_data(self):
+        
+        curr_data_path = list(self.data_path.glob('insider_*.csv'))[0]
+        df = pd.read_csv(
+            curr_data_path, 
+            parse_dates=['Date'], 
+            date_format='%Y-%m-%d'
+        )    
+        return df
+    
     def is_empty(self):
         
         if (not self.get_data('f')) or (not self.get_data('m')):
@@ -421,4 +532,7 @@ class Stock:
             return False
     
     def get_updated_date(self):
-        return self.update_date
+        return self.mkt_last_update
+    
+    def get_ticker(self):
+        return self.tic

@@ -1,25 +1,21 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 Created on Sun Mar 29 16:48:50 2020
 
 @author: franciscosilva
 
 """
-
-from datetime import datetime, timedelta
-import time, requests, pandas, lxml
-from lxml import html
+import pandas
+import lxml
+import random
 import pandas as pd
-import csv
 import requests
+import datetime
 from bs4 import BeautifulSoup as bs
 import re
 import json
 import time
 import numpy as np
 import yfinance as yf
-import time
 from requests import Session
 from requests_cache import CacheMixin, SQLiteCache
 from requests_ratelimiter import LimiterMixin, MemoryQueueBucket
@@ -90,7 +86,7 @@ def header(subdomain):
 
 def scrape_page(url, header):
      page = requests.get(url, params=header)
-     element_html = html.fromstring(page.content)
+     element_html = lxml.html.fromstring(page.content)
      table = element_html.xpath('//table')
      table_tree = lxml.etree.tostring(table[0], method='xml')
      panda = pandas.read_html(table_tree)
@@ -144,8 +140,8 @@ def get_splits(tic):
 
 def correct_splits(data, tic, col):
     """
-    Correct annualized dividend data, taking into account
-    stock splits, in order to get correct cash dividend values.
+    Correct market data, taking into account
+    stock splits, in order to get accurate trackback.
 
     Parameters
     ----------
@@ -239,17 +235,42 @@ def get_dividends(symbol, day_history=5900):
 
 
 def list_sp500_stocks():
+    """
+    List S&P500 stocks.
+
+    Returns:
+        pd.DataFrame: S&P500 data (tickers and sectors)
+    """
+    
     resp = requests.get('http://en.wikipedia.org/wiki/List_of_S%26P_500_companies')
+    time.sleep(random.uniform(1, 3))
+    
     soup = bs(resp.text, 'lxml')
     table = soup.find('table', {'class': 'wikitable sortable'})
 
-    data = {"Symbol": [], "Sector": []}
+    data = {
+        "Symbol": [],
+        "Security": [],
+        "Sector": [],
+        "Sub-Sector": [],
+        "Founded": []
+    }
 
     for row in table.findAll('tr')[1:]:
+        
+        # find entries
         ticker = row.findAll('td')[0].text.replace('\n', '')
-        sector = row.findAll('td')[2].text
+        security = row.findAll('td')[1].text.replace('\n', '')
+        sector = row.findAll('td')[2].text.replace('\n', '')
+        subsector = row.findAll('td')[3].text.replace('\n', '')
+        founded = row.findAll('td')[7].text.replace('\n', '')
+        
+        # save data
         data["Symbol"].append(ticker)
+        data["Security"].append(security)
         data["Sector"].append(sector)
+        data["Sub-Sector"].append(subsector)
+        data["Founded"].append(founded)
 
     return pd.DataFrame(data)
 
@@ -259,14 +280,17 @@ def get_market_data(tic, start, end):
     Scrape daily market data for a stock.
     """
 
-    time.sleep(1)
     session = get_session()
     
     t = yf.Ticker(tic, session=session)
     
-    market_hist = t.history(start=start, 
-                            end=end, 
-                            auto_adjust=False).reset_index(drop=False)
+    market_hist = t.history(
+        start=start, 
+        end=end, 
+        auto_adjust=False
+    ).reset_index(drop=False)
+    
+    time.sleep(random.uniform(1, 3))
     
     market_hist['Date'] = market_hist['Date'].apply(lambda x: x.date())
     market_hist['Date'] = pd.to_datetime(market_hist['Date'])
@@ -282,24 +306,30 @@ def get_earnings_dates(tic,  start, end):
     Scrape earnings dates and eps estimates
     """
     
-    n_quarters = int((end - start).days / 90) + 10
+    n_quarters = int((end - start).days / 90) + 30
 
-    time.sleep(1)
     session = get_session()
     t = yf.Ticker(tic, session=session)
     earn_dates = t.get_earnings_dates(limit=n_quarters).reset_index()
-    earn_dates = earn_dates.rename(columns={"Earnings Date": "rdq",
-                                            "EPS Estimate": "eps_est",
-                                            "Reported EPS": "eps_rep",
-                                            "Surprise(%)": "surprise_pct"
-                                            })
+    time.sleep(random.uniform(1, 3))
+    
+    earn_dates = earn_dates.rename(
+        columns={
+            "Earnings Date": "rdq",
+            "EPS Estimate": "eps_est",
+            "Reported EPS": "eps_rep",
+            "Surprise(%)": "surprise_pct"
+        }
+    )
     earn_dates['rdq'] = earn_dates['rdq'].apply(lambda x: x.date())
     earn_dates = earn_dates.drop_duplicates(subset=['rdq'])
     earn_dates['rdq'] = pd.to_datetime(earn_dates['rdq'])
     earn_dates.sort_values(by=['rdq'], inplace=True)
     earn_dates.dropna(subset=['eps_est', 'eps_rep', 'surprise_pct'], inplace=True)
-    earn_dates = earn_dates[(earn_dates.rdq >= start) & 
-                            (earn_dates.rdq < end)]
+    earn_dates = earn_dates[
+        (earn_dates.rdq >= start) & 
+        (earn_dates.rdq < end)
+    ]
     
     if not len(earn_dates):
         raise Exception("Empty DataFrame")
@@ -357,6 +387,8 @@ def scrape_income_statement_mt(tic, start, end):
     
     # correct shares outstanding
     df = correct_splits(df, tic, 'cshoq')
+    
+    time.sleep(random.uniform(1, 3))
 
     return df
 
@@ -418,6 +450,8 @@ def scrape_balance_sheet_mt(tic, start, end):
     for col in df.columns[1:]:
         df.loc[df[col] == '', col] = None
         df[col] = df[col].astype(float)
+        
+    time.sleep(random.uniform(1, 3))
 
     return df
 
@@ -467,6 +501,8 @@ def scrape_cash_flow_mt(tic, start, end):
     for col in df.columns[1:]:
         df.loc[df[col] == '', col] = None
         df[col] = df[col].astype(float)
+        
+    time.sleep(random.uniform(1, 3))
     
     return df
 
@@ -515,13 +551,14 @@ def scrape_ratios_mt(tic, start, end):
         
     if not len(df):
         raise Exception("Empty DataFrame")
+    
+    time.sleep(random.uniform(1, 3))
 
     return df
 
 
 def scrape_fundamental_data_yahoo(tic, start, end):
    
-    time.sleep(1)
     session = get_session()
     
     t = yf.Ticker(tic, session=session)
@@ -562,5 +599,72 @@ def scrape_fundamental_data_yahoo(tic, start, end):
     df[df.columns[1:]] /= 1000000
     df['dvq'] = -df['dvq']
     df['capxq'] = -df['capxq']
+    
+    time.sleep(random.uniform(1, 3))
         
     return df
+
+
+def get_stock_insider_data(ticker):
+    
+    field_names = [
+        'filling_date',
+        'trade_date', 
+        'owner_name',
+        'Title',
+        'transaction_type',
+        'last_price',
+        'Qty',
+        'shares_held',
+        'Owned',
+        'Value'
+    ]
+    url = (
+        f'http://openinsider.com/screener?s={ticker}&o=&pl=&ph=&ll=&lh=&fd=0'
+        '&fdr=&td=0&tdr=&fdlyl=&fdlyh=&daysago=&xp=1&xs=1&vl=&vh=&ocl=&och=&'
+        'sic1=-1&sicl=100&sich=9999&grp=0&nfl=&nfh=&nil=&nih=&nol=&noh=&v2l=&v2h=&oc2l=&oc2h=&sortcol=0&cnt=1000&page=1'
+    )
+    
+    data = []
+    
+    try:
+        response = requests.get(url)
+        time.sleep(random.uniform(1, 3))
+        soup = bs(response.text, 'html.parser')
+        table = soup.find('table', {'class': 'tinytable'})
+        if not table:
+            raise ValueError("Table not found on page")
+
+        rows = table.find_all('tr')
+        for row in rows[1:]:  # Skip the header row
+            cols = row.find_all('td')
+            if not cols:
+                continue
+            insider_data = [
+                cols[1].text.strip(),
+                cols[2].text.strip(),
+                cols[4].text.strip(),
+                cols[5].text.strip(),
+                cols[6].text.strip(),
+                cols[7].text.strip(),
+                cols[8].text.strip(),
+                cols[9].text.strip(),
+                cols[10].text.strip(),
+                cols[11].text.strip(),
+            ]
+            data.append(insider_data)
+
+    except Exception as e:
+        raise e
+
+    df = pd.DataFrame(data, columns=field_names)
+    df['filling_date'] = pd.to_datetime(df['filling_date'])
+    df['trade_date'] = pd.to_datetime(df['trade_date'])
+    return df
+
+
+def get_stock_metadata(ticker):
+    session = get_session()
+    stock = yf.Ticker(ticker, session=session)
+    # The scraped response will be stored in the cache
+    return stock.info

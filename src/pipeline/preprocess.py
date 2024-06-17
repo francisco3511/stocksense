@@ -92,6 +92,7 @@ def get_rsi(close, lookback):
         else:
             up.append(ret[i])
             down.append(0)
+    
     up_series = pd.Series(up)
     down_series = pd.Series(down).abs()
     up_ewm = up_series.ewm(com = lookback - 1, adjust = False).mean()

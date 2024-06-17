@@ -1,6 +1,6 @@
 import datetime as dt
 from loguru import logger
-from pipeline import Etl
+from pipeline import Etl, Stock, Preprocess
 
 
 def main():
@@ -17,18 +17,26 @@ def main():
                 "{module}:{function}:{line} - {message}"),
     )
 
-    handler = Etl()
-    handler.extract_stock_data()
-    handler.extract_sp_500()
-    """
-    f_data, m_data = handler.load_stock_data()
-    index_data = handler.load_index_data()
-    print(f_data.shape, m_data.shape, index_data.shape)
-    preprocessor = Preprocess(f_data, m_data, index_data)
+    handler = Etl(False)
+    
+    #print('Updating stock data')
+    #handler.extract_stock_data()
+    #handler.extract_sp_500()
+    
+    data = handler.load_stock_data()
+    preprocessor = Preprocess(data)
     df = preprocessor.feature_engineering()
-    """
+    
     print('done')
+    
 
+
+def test_individual():
+    
+    stock = Stock('HRB')
+
+    # update stock data
+    stock.retrieve_insider_data(update=False)
 
 if __name__ == "__main__":
     main()
