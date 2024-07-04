@@ -1,18 +1,9 @@
 import streamlit as st
-from pipeline import Etl
-
-
-def initialize():
-    handler = Etl()
-    handler.extract_sp_500()
-
 
 st.set_page_config(
     page_title="StockSense",
     page_icon="👋",
 )
-
-#initialize()
 
 st.write("# Welcome to StockSense Analytics Platform 👋")
 

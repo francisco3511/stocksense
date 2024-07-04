@@ -7,43 +7,32 @@
     - 'fqtr'
     - 'datafmt'
     - 'indfmt'
-    - 'rdq' # report date of earnings
-    # Income Statement Data
-    - 'saleq' # Sales/Revenue (total)
-    - 'cogsq'  # Cost of goods sold
-    - 'xsgaq' # SGA Costs
-    #- 'oibdpq' # Operating Income before Depreciation and Amortization (measure of EBITDA)
-    - 'niq' # Net income
-    - 'dpq' # Depreciation and amortization costs
-    - 'txtq' # Total taxes
-    - 'xintq' # Total interest
-    # Balance Sheet Data
-    # Assets
-    - 'cheq' # Cash and Equivalents (Cash + Short-Term Investments)
-    - 'invtq' # Inventory
-    - 'rectq' # Total receivables
-    - 'actq' # Total current assets
+    - 'rdq'
+    - 'saleq' 
+    - 'cogsq'  
+    - 'xsgaq'
+    - 'niq'
+    - 'dpq'
+    - 'txtq'
+    - 'xintq' 
+    - 'cheq'
+    - 'invtq'
+    - 'rectq'
+    - 'actq'
     - 'ppentq' # Property Plant and Equipment - Total (Net)
     - 'atq' # Total assets
-    # Liabilities
     - 'lctq' # Total current liabilities
     - 'dlttq' # Total long term Debt
     - 'ltq' # Total liabilities,
     - 'seqq' # Total Shareholders Equity
     - 'req' # Retained Earnings
-    # Cash Flow Statement
     - 'oancfy' # Cumulative Yearly CF from Operating Activities
     - 'ivncfy' # Cumulative Yealy CF from Investing Activities
     - 'fincfy' # Cumulative Yealy CF from Financial Activities
-    # Others
     - 'icaptq' # Invested capital
     - 'capxy' # Capital Expenditures
     - 'cshoq' # Common Shares Outstanding
-    #- 'dvpq' # Preferred Div
-    - 'dvy' # Cash Dividend Value
-    - 'epspiq'
-    - 'epsfiq'
-    - 'epsfi12'
+    - 'dvy'
 'macrotrends':
     'income_statement':
         'field_name': 'datadate'
@@ -100,6 +89,79 @@
     'Common Stock Dividend Paid': 'dvq'
     'Capital Expenditure': 'capxq'
     'Invested Capital': 'icaptq'
+'db':
+    'stocks':
+        - 'tic'
+        - 'name'
+        - 'sector'
+        - 'last_update'
+        - 'spx_status'
+        - 'active'
+    'metadata':
+        - 'tic'
+        - 'shares_outstanding'
+        - 'enterprise_value'
+        - 'rec_key'
+        - 'forward_pe'
+    'market':
+        - 'tic'
+        - 'date'
+        - 'close'
+        - 'adj_close'
+        - 'volume'
+    'financials':
+        - 'tic'
+        - 'datadate'
+        - 'rdq'
+        - 'saleq' 
+        - 'cogsq'
+        - 'xsgaq'
+        - 'niq'
+        - 'ebitdaq'
+        - 'cshoq'
+        - 'actq'
+        - 'atq' 
+        - 'cheq'
+        - 'rectq' 
+        - 'invtq'
+        - 'ppentq'
+        - 'lctq'
+        - 'dlttq' 
+        - 'ltq' 
+        - 'req'
+        - 'seqq'
+        - 'oancfq'
+        - 'ivncfq'
+        - 'fincfq'
+        - 'dvq' 
+        - 'capxq' 
+        - 'icaptq'
+        - 'surprise_pct'
+    'insider':
+        - 'tic'
+        - 'filling_date' 
+        - 'trade_date'
+        - 'owner_name'
+        - 'title'
+        - 'transaction_type'
+        - 'last_price'
+        - 'qty'
+        - 'shares_held'
+        - 'owned'
+        - 'value'
+    'sp500':
+        - 'date'
+        - 'close'
+        - 'adj_close'
+        - 'volume'
 'variables':
+    - 'pe'
+    - 'pb'
+    - 'eps'
     - 'roa'
     - 'roe'
+    - 'ev_ebitda'
+    - 'sale_g1'
+    - 'rsi_9'
+    - 'rsi_30'
+

@@ -75,7 +75,10 @@ def load_stock_data(ticker, update=False):
     stock = Stock(ticker)
     
     # get stock info
-    info = get_stock_metadata(ticker)
+    try:
+        info = stock.get_metadata()
+    except Exception as e:
+        info = get_stock_metadata(ticker)
     
     if update:
         # update stock data
@@ -144,7 +147,6 @@ market_df = stock.get_market_data()
 # Calculate the MAs for graphs
 market_df['SMA-50'] = ta.SMA(market_df['Close'],timeperiod=50)
 market_df['SMA-200'] = ta.SMA(market_df['Close'], timeperiod=200)
-#market_df['RSI'] = ta.RSI(market_df['Close'], timeperiod=14)
 
 fin_df = stock.get_financial_data()
 
@@ -356,5 +358,5 @@ with tab2:
         st.plotly_chart(fig, theme='streamlit', use_container_width=True)
         
 with tab3:
-    
+    pass
     

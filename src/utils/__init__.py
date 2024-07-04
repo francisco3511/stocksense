@@ -1,1 +1,1 @@
-from .market_scraper import *
+from utils.scraper_utils import *
