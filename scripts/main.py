@@ -1,7 +1,7 @@
 import datetime as dt
 from loguru import logger
 from pipeline import Etl
-from database_handler import DatabaseHandler
+
 
 def main():
     """
@@ -18,10 +18,10 @@ def main():
             "{module}:{function}:{line} - {message}"
         ),
     )
-    
+
     handler = Etl()
-    #handler.ingest_historical_data()
-    #handler.update_index_listings()
+    handler.ingest_all_historical_data()
+    # handler.update_index_listings()
     handler.set_stocks()
     handler.extract()
     print('done.')

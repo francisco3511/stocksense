@@ -19,19 +19,19 @@
     - 'invtq'
     - 'rectq'
     - 'actq'
-    - 'ppentq' # Property Plant and Equipment - Total (Net)
-    - 'atq' # Total assets
-    - 'lctq' # Total current liabilities
-    - 'dlttq' # Total long term Debt
-    - 'ltq' # Total liabilities,
-    - 'seqq' # Total Shareholders Equity
-    - 'req' # Retained Earnings
-    - 'oancfy' # Cumulative Yearly CF from Operating Activities
-    - 'ivncfy' # Cumulative Yealy CF from Investing Activities
-    - 'fincfy' # Cumulative Yealy CF from Financial Activities
-    - 'icaptq' # Invested capital
-    - 'capxy' # Capital Expenditures
-    - 'cshoq' # Common Shares Outstanding
+    - 'ppentq'
+    - 'atq'
+    - 'lctq'
+    - 'dlttq'
+    - 'ltq'
+    - 'seqq'
+    - 'req'
+    - 'oancfy'
+    - 'ivncfy'
+    - 'fincfy'
+    - 'icaptq'
+    - 'capxy'
+    - 'cshoq'
     - 'dvy'
 'macrotrends':
     'income_statement':
@@ -164,4 +164,3 @@
     - 'sale_g1'
     - 'rsi_9'
     - 'rsi_30'
-
