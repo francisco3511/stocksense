@@ -98,7 +98,10 @@ class Etl:
                 )
             else:
                 stock_info = active_df.loc[active_df.tic == tic]
-                stock_info["last_update"] = self.base_date
+                stock_info["last_update"] = dt.datetime.strptime(
+                    self.base_date,
+                    '%Y-%m-%d'
+                ).date()
                 stock_info["spx_status"] = 1
                 stock_info["active"] = 1
                 self.db_handler.insert_stock_info(
@@ -126,8 +129,8 @@ class Etl:
         # update index daily price data
         self.extract_sp_500()
 
+        # update stock data
         for tic in self.stocks:
-            # update stock data
             self.extract_stock_data(tic)
             pl_bar.update(1)
         pl_bar.close()
@@ -189,7 +192,6 @@ class Etl:
         # extract market data
         self.extract_market_data(tic, last_update)
         self.extract_insider_data(tic, last_update)
-
         return True
 
     def extract_metadata(self, tic: str) -> bool:
@@ -528,6 +530,10 @@ class Etl:
             financials_df = financials_df[self.db_fields["financials"]]
             financials_df['datadate'] = pd.to_datetime(
                 financials_df['datadate'],
+                format='ISO8601'
+            ).dt.date
+            financials_df['rdq'] = pd.to_datetime(
+                financials_df['rdq'],
                 format='ISO8601'
             ).dt.date
             self.db_handler.insert_financial_data(financials_df)

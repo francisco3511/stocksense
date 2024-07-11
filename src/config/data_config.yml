@@ -154,13 +154,17 @@
         - 'close'
         - 'adj_close'
         - 'volume'
-'variables':
+'features':
     - 'pe'
     - 'pb'
     - 'eps'
     - 'roa'
     - 'roe'
     - 'ev_ebitda'
-    - 'sale_g1'
+    - 'sales_yoy'
     - 'rsi_9'
     - 'rsi_30'
+'targets':
+    - 'freturn_yoy'
+    - 'adj_freturn_yoy'
+    - 'out_perf_yoy'

@@ -1,6 +1,6 @@
 import datetime as dt
 from loguru import logger
-from pipeline import Etl
+from pipeline import Etl, Preprocess
 
 
 def main():
@@ -21,9 +21,13 @@ def main():
 
     handler = Etl()
     handler.ingest_all_historical_data()
-    # handler.update_index_listings()
+    #handler.update_index_listings()
     handler.set_stocks()
     handler.extract()
+    
+    #proc = Preprocess()
+    #proc.process_data()
+    
     print('done.')
 
 

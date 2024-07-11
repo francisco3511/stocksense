@@ -1,6 +1,7 @@
 import random
 import time
 import requests
+import logging
 import pandas as pd
 import numpy as np
 import datetime as dt
@@ -13,6 +14,10 @@ from pyrate_limiter import Duration, RequestRate, Limiter
 
 from config import get_config
 
+MAX_TIMER = 2
+
+# Suppress logging from the yfinance and requests libraries
+logging.getLogger('yfinance').setLevel(logging.CRITICAL)
 
 class CachedLimiterSession(CacheMixin, LimiterMixin, Session):
     pass
@@ -150,7 +155,7 @@ def scrape_fundamental_data_yahoo(
     cf_df = t.quarterly_cashflow.T
 
     # set timer
-    time.sleep(random.uniform(1, 2))
+    time.sleep(random.uniform(1, MAX_TIMER))
 
     is_df.index = pd.to_datetime(is_df.index)
     bs_df.index = pd.to_datetime(bs_df.index)
@@ -216,7 +221,8 @@ def get_market_data(ticker, start):
         auto_adjust=False
     ).reset_index(drop=False)
 
-    time.sleep(random.uniform(1, 2))
+    # set timer
+    time.sleep(random.uniform(1, MAX_TIMER))
 
     # check if data was returned
     if df.empty:
@@ -240,7 +246,7 @@ def get_earnings_dates(tic: str,  start: dt.date, end: dt.date):
     session = get_session()
     t = yf.Ticker(tic, session=session)
     df = t.get_earnings_dates(limit=n_quarters).reset_index()
-    time.sleep(random.uniform(1, 2))
+    time.sleep(random.uniform(1, MAX_TIMER))
 
     df = df.rename(columns={
         "Earnings Date": "rdq",
@@ -254,6 +260,7 @@ def get_earnings_dates(tic: str,  start: dt.date, end: dt.date):
     df = df.drop_duplicates(subset=['rdq'])
     df.sort_values(by=['rdq'], inplace=True)
     df.dropna(subset=['surprise_pct'], inplace=True)
+    df.dropna(subset=['rdq'], inplace=True)
 
     if df.empty:
         raise Exception("Empty DataFrame")
@@ -293,6 +300,10 @@ def get_financial_data(
     # ensure correct date typing
     df['datadate'] = pd.to_datetime(df['datadate'], format="ISO8601").dt.date
     df['rdq'] = pd.to_datetime(df['rdq'], format="ISO8601").dt.date
+    
+    # in cases where data is found but no release dt, defer to today
+    today = dt.datetime.now().date()
+    df['rdq'] = df['rdq'].fillna(today)
 
     return df
 
@@ -414,7 +425,7 @@ def get_stock_metadata(ticker: str) -> dict:
     metadata = stock.info
 
     # set sleeper
-    time.sleep(random.uniform(1, 2))
+    time.sleep(random.uniform(1, MAX_TIMER))
 
     # verify data and format it
     if not metadata:
