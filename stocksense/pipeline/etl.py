@@ -20,16 +20,16 @@ from utils import (
 
 class Etl:
     """
-    ETL handler class for stock data. This class extracts data
-    from data sources and ingests it.
-    It also handles ingestion from historical data files.
+    ETL handler class for stock data.
+    Handles data extraction process from each source
+    and ingestion process.
     """
 
     def __init__(self, stocks: list[str | None] = []):
-        self.fin_source = "yahoo"
         self.db_handler = DatabaseHandler()
         self.db_fields = get_config("data")["db"]
         self.base_date = get_config("data")["base_date"]
+        self.fin_source = "yahoo"
         self.historical_data_path = Path('data/1_work_data/')
         self.stocks = None
         self.set_stocks(stocks)
@@ -70,10 +70,10 @@ class Etl:
 
         logger.info("updating S&P500 index listings")
 
-        # read control file
+        # read main stock control table
         hist_df = self.db_handler.fetch_stock_info()
 
-        # read active sp500 stocks/sectors
+        # extract active sp500 stocks/sectors
         active_df = scrape_sp500_stock_info()
 
         # get historical, current and last sp500 tickers
@@ -112,7 +112,7 @@ class Etl:
         return None
 
     def is_empty(self):
-        """ Check if no stocks were assigned to ETL process."""
+        """Check if no stocks were assigned to ETL process."""
         return not self.stocks
 
     def extract(self):
@@ -443,14 +443,14 @@ class Etl:
                     self.db_handler.update_stock_data(tic, {'active': 1})
                 self._ingest_financials_data(financials_file, tic)
         except (IndexError, FileNotFoundError) as e:
-            logger.warning(f"Financials data file not found for {tic}: {e}")
+            logger.warning(f"financials file not found for {tic}: {e}")
 
         try:
             metadata_file = stock_path / 'metadata.json'
             if metadata_file.exists():
                 self._ingest_metadata(metadata_file, tic)
         except (IndexError, FileNotFoundError) as e:
-            logger.warning(f"Metadata file not found for {tic}: {e}")
+            logger.warning(f"metadata file not found for {tic}: {e}")
 
     def _ingest_market_data(self, market_file: Path, tic: str) -> None:
         """
@@ -479,7 +479,7 @@ class Etl:
             ).dt.date
             self.db_handler.insert_market_data(market_df)
         except Exception:
-            logger.warning(f"Market data file for {tic} is empty.")
+            logger.warning(f"market data file for {tic} is empty.")
 
     def _ingest_insider_data(self, insider_file: Path, tic: str) -> None:
         """
@@ -512,7 +512,7 @@ class Etl:
             insider_df = insider_df[self.db_fields["insider"]]
             self.db_handler.insert_insider_data(insider_df)
         except Exception:
-            logger.warning(f"Insider data file for {tic} is empty.")
+            logger.warning(f"insider data file for {tic} is empty.")
 
     def _ingest_financials_data(self, financials_file: Path, tic: str) -> None:
         """
@@ -538,7 +538,7 @@ class Etl:
             ).dt.date
             self.db_handler.insert_financial_data(financials_df)
         except Exception:
-            logger.warning(f"Financials data file for {tic} is empty.")
+            logger.warning(f"financials data file for {tic} is empty.")
 
     def _ingest_metadata(self, metadata_file: Path, tic: str) -> None:
         """
@@ -572,4 +572,4 @@ class Etl:
                 record['forward_pe'] = data['forwardPE']
             self.db_handler.insert_metadata(record)
         except Exception:
-            logger.warning(f"Metadata file for {tic} is empty.")
+            logger.warning(f"metadata file for {tic} is empty.")

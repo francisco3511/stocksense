@@ -65,6 +65,7 @@ class DatabaseHandler:
         self,
         tic: Optional[int] = None
     ) -> pd.DataFrame | tuple:
+        
         if tic:
             # fetch stock info
             rec = fetch_record(
@@ -87,46 +88,54 @@ class DatabaseHandler:
         self,
         tic: Optional[int] = None
     ) -> pd.DataFrame:
+        
         if tic:
+            # fetch metadata record of a single stock
             return fetch_record(self.db.get_connection(), "metadata", {"tic": tic})
         else:
+            # fetch all metadata
             return fetch_data(self.db.get_connection(), "metadata")
 
     def fetch_market_data(
         self,
         tic: Optional[int] = None
     ) -> pd.DataFrame:
+        
         if tic:
+            # fetch single stock
             df = fetch_data(self.db.get_connection(), "market", {"tic": tic})
         else:
+            # fetch all market records
             df = fetch_data(self.db.get_connection(), "market")
+        
+        # format dates
         df['date'] = pd.to_datetime(
-            df['date'],
-            format='ISO8601',
-            errors='coerce'
+            df['date'], format='ISO8601', errors='coerce'
         ).dt.date
+        
         return df
 
     def fetch_financial_data(
         self,
         tic: Optional[int] = None
     ) -> pd.DataFrame:
+        
         if tic:
+            # fetch single stock
             df = fetch_data(self.db.get_connection(), "financials", {"tic": tic})
         else:
+            # fetch all financials
             df = fetch_data(self.db.get_connection(), "financials")
 
         # format dates
         df['datadate'] = pd.to_datetime(
-            df['datadate'],
-            format='ISO8601',
-            errors='coerce'
+            df['datadate'], format='ISO8601', errors='coerce'
         ).dt.date
+        
         df['rdq'] = pd.to_datetime(
-            df['rdq'],
-            format='ISO8601',
-            errors='coerce'
+            df['rdq'], format='ISO8601', errors='coerce'
         ).dt.date
+        
         return df
 
     def fetch_insider_data(
@@ -135,20 +144,19 @@ class DatabaseHandler:
     ) -> pd.DataFrame:
         
         if tic:
+            # fetch single stock
             df = fetch_data(self.db.get_connection(), "insider", {"tic": tic})
         else:
+            # fetch all insider trading records
             df = fetch_data(self.db.get_connection(), "insider")
 
         # format dates
         df['trade_date'] = pd.to_datetime(
-            df['trade_date'],
-            format='ISO8601',
-            errors='coerce'
+            df['trade_date'], format='ISO8601', errors='coerce'
         ).dt.date
+        
         df['filling_date'] = pd.to_datetime(
-            df['filling_date'],
-            format='ISO8601',
-            errors='coerce'
+            df['filling_date'], format='ISO8601', errors='coerce'
         ).dt.date
 
         return df

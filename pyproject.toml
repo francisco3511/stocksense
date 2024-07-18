@@ -1,3 +1,20 @@
+[project]
+name = "stocksense"
+version = "1.0.0"
+description = "Package for value investing and advanced stock analytics"
+authors = [
+    {name="Francisco Silva", email="francisco3597@gmail.com"},
+]
+
+readme = "README.md"
+requires-python = ">=3.9"
+
 [build-system]
 requires = ["setuptools"]
 build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["stocksense"]
+
+[project.scripts]
+run-app = "stocksense.app:main"
