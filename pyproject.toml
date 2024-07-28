@@ -5,6 +5,23 @@ description = "Package for value investing and advanced stock analytics"
 authors = [
     {name="Francisco Silva", email="francisco3597@gmail.com"},
 ]
+dependencies = [
+    "requests",
+    "PyYAML",
+    "numpy",
+    "polars",
+    "loguru",
+    "tqdm",
+    "streamlit",
+    "yfinance",
+    "beautifulsoup4",
+    "requests_cache",
+    "requests_ratelimiter",
+    "pyrate_limiter",
+    "pygad",
+    "xgboost",
+    "scikit-learn"
+]
 
 readme = "README.md"
 requires-python = ">=3.9"

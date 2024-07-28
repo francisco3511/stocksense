@@ -3,7 +3,7 @@ import json
 from pathlib import Path
 import datetime as dt
 
-import pandas as pd
+import polars as pl
 from loguru import logger
 from tqdm import tqdm
 
@@ -57,10 +57,9 @@ class Etl:
         else:
             # read main table and return current index members
             stock_data = self.db_handler.fetch_stock_info()
-            self.stocks = stock_data.loc[
-                stock_data.active == 1,
-                'tic'
-            ].values.tolist()
+            self.stocks = stock_data.filter(
+                pl.col('active') == 1
+            )['tic'].to_list()
 
     def update_index_listings(self) -> None:
         """
@@ -77,12 +76,9 @@ class Etl:
         active_df = scrape_sp500_stock_info()
 
         # get historical, current and last sp500 tickers
-        hist_constituents = hist_df['tic'].values.tolist()
-        last_constituents = hist_df.loc[
-            hist_df.spx_status == 1,
-            'tic'
-        ].values.tolist()
-        constituents = active_df['tic'].values.tolist()
+        hist_constituents = hist_df['tic'].to_list()
+        last_constituents = hist_df.filter(pl.col('spx_status') == 1)['tic'].to_list()
+        constituents = active_df['tic'].to_list()
 
         # downgrade delisted symbols
         for tic in [t for t in last_constituents if t not in constituents]:
@@ -97,13 +93,12 @@ class Etl:
                     tic, {"spx_status": 1, "active": 1}
                 )
             else:
-                stock_info = active_df.loc[active_df.tic == tic]
-                stock_info["last_update"] = dt.datetime.strptime(
-                    self.base_date,
-                    '%Y-%m-%d'
-                ).date()
-                stock_info["spx_status"] = 1
-                stock_info["active"] = 1
+                stock_info = active_df.filter(pl.col('tic') == tic)
+                stock_info = stock_info.with_columns([
+                    pl.lit(dt.datetime.strptime(self.base_date, '%Y-%m-%d').date()).alias('last_update'),
+                    pl.lit(1).alias('spx_status'),
+                    pl.lit(1).alias('active')
+                ])
                 self.db_handler.insert_stock_info(
                     stock_info[self.db_fields["stocks"]]
                 )
@@ -144,7 +139,7 @@ class Etl:
         try:
             # scrape index data and save to db
             data = get_market_data('^GSPC', self.base_date)
-            data = data.drop(columns=["tic"])
+            data = data.drop('tic')
             self.db_handler.insert_sp_data(data)
             logger.info("inserted S&P500 market data")
         except Exception:
@@ -164,10 +159,8 @@ class Etl:
         logger.info(f"extracting {tic} stock data")
 
         try:
-            stock_info = self.db_handler.fetch_stock_info(tic)
-            last_update = dt.datetime.strptime(
-                stock_info[3], '%Y-%m-%d'
-            ).date()
+            stock_info = self.db_handler.fetch_stock_info(tic).row(0, named=True)
+            last_update = stock_info['last_update']
         except Exception:
             # if stock information is not stored on main table, raise exception
             logger.error(f"no stock {tic} info available.")
@@ -175,18 +168,18 @@ class Etl:
 
         # extract financial data
         if not self.extract_fundamental_data(tic, last_update):
-            # if no data found and no data for past 2yrs, flag as innactive
+            # if no data found and no data for past 2yrs, flag as inactive
             if last_update.year < dt.datetime.now().year - 2:
                 self.db_handler.update_stock_data(tic, {'active': 0})
-                logger.info(f"flagged {tic} as innactive")
+                logger.info(f"flagged {tic} as inactive")
                 return False
 
         # extract metadata and update stock status
         if not self.extract_metadata(tic):
-            # if no metadata found and no data for past yr, flag as innactive
+            # if no metadata found and no data for past yr, flag as inactive
             if last_update.year < dt.datetime.now().year - 1:
                 self.db_handler.update_stock_data(tic, {'active': 0})
-                logger.info(f"flagged {tic} as innactive")
+                logger.info(f"flagged {tic} as inactive")
             return False
 
         # extract market data
@@ -236,16 +229,16 @@ class Etl:
         bool
             Success status.
         """
-
+        
         try:
             # parse table dates
             fin_data = self.db_handler.fetch_financial_data(tic)
-            if fin_data.empty:
+            if fin_data.is_empty():
                 raise Exception("no financial data available")
             start_dt = fin_data['rdq'].max()
         except Exception:
             # no past data available for stock
-            fin_data = pd.DataFrame(columns=self.db_fields["financials"])
+            fin_data = pl.DataFrame(schema=self.db_fields["financials"])
             logger.warning(
                 f'no past financial data found for {tic} ({last_update})'
             )
@@ -306,11 +299,15 @@ class Etl:
         end_date = dt.datetime.now().date()
 
         try:
-            if end_date <= last_update:
-                logger.info(
-                    f'market data already up to date for {tic} ({end_date})'
-                )
-                return False
+            # read market data
+            mkt_data = self.db_handler.fetch_market_data(tic)
+
+            if not mkt_data.is_empty():
+                if end_date <= mkt_data['date'].max():
+                    logger.info(
+                        f'market data already up to date for {tic} ({end_date})'
+                    )
+                    return False
 
             # scrape market data (takes in date as str)
             data = get_market_data(
@@ -345,14 +342,18 @@ class Etl:
         """
 
         # set end date to present
-        end_date = dt.datetime.now().strftime('%Y-%m-%d')
+        end_date = dt.datetime.now().date()
 
         try:
-            if dt.datetime.now().date() <= last_update:
-                logger.info(
-                    f'insider data: already up to date for {tic} ({end_date})'
-                )
-                return False
+            # read market data
+            ins_data = self.db_handler.fetch_insider_data(tic)
+
+            if not ins_data.is_empty():
+                if end_date <= ins_data['filling_date'].max():
+                    logger.info(
+                        f'insider data already up to date for {tic} ({end_date})'
+                    )
+                    return False
 
             # scrape insider data
             data = get_stock_insider_data(tic)
@@ -386,16 +387,22 @@ class Etl:
         """
         Ingest historical S&P500 member info.
         """
-        index_df = pd.read_csv(
-            self.historical_data_path / 'SP500.csv', sep=';'
+        index_df = pl.read_csv(
+            self.historical_data_path / 'SP500.csv',
+            separator=';'
         )
-        index_df["spx_status"] = index_df["spx_status"].astype('Int64')
-        index_df["active"] = index_df["spx_status"]
-        index_df["last_update"] = dt.datetime.strptime(
+
+        parsed_date = dt.datetime.strptime(
             self.base_date,
             '%Y-%m-%d'
         ).date()
-        index_df = index_df[self.db_fields["stocks"]]
+
+        index_df = index_df.with_columns(
+            pl.col("spx_status").cast(pl.Int16),
+            pl.col("spx_status").cast(pl.Int16).alias("active"),
+            pl.lit(parsed_date).alias('last_update')
+        )[self.db_fields["stocks"]]
+
         self.db_handler.insert_stock_info(index_df)
 
     def _ingest_historical_stock_data(
@@ -464,19 +471,18 @@ class Etl:
             Target stock ticker.
         """
         try:
-            market_df = pd.read_csv(market_file)
-            market_df["tic"] = tic
-            market_df = market_df.rename(columns={
+            market_df = pl.read_csv(market_file)
+            market_df = market_df.with_columns(
+                pl.col('Date').str.to_date("%Y-%m-%d"),
+                pl.lit(tic).alias("tic")
+            )
+            market_df = market_df.rename({
                 "Date": "date",
                 "Close": "close",
                 "Adj Close": "adj_close",
                 "Volume": "volume"
             })
             market_df = market_df[self.db_fields["market"]]
-            market_df['date'] = pd.to_datetime(
-                market_df['date'],
-                format='ISO8601'
-            ).dt.date
             self.db_handler.insert_market_data(market_df)
         except Exception:
             logger.warning(f"market data file for {tic} is empty.")
@@ -493,17 +499,15 @@ class Etl:
             Target stock ticker.
         """
         try:
-            insider_df = pd.read_csv(insider_file)
-            insider_df['trade_date'] = pd.to_datetime(
-                insider_df['trade_date'],
-                format='ISO8601'
-            ).dt.date
-            insider_df['filling_date'] = pd.to_datetime(
-                insider_df['filling_date'],
-                format='ISO8601'
-            ).dt.date
-            insider_df["tic"] = tic
-            insider_df = insider_df.rename(columns={
+            insider_df = pl.read_csv(insider_file)
+
+            insider_df = insider_df.with_columns(
+                pl.col('filling_date').str.to_datetime("%Y-%m-%d %H:%M:%S").dt.date(),
+                pl.col('trade_date').str.to_datetime("%Y-%m-%d %H:%M:%S").dt.date(),
+                pl.lit(tic).alias("tic")
+            )
+
+            insider_df = insider_df.rename({
                 "Title": "title",
                 "Qty": "qty",
                 "Owned": "owned",
@@ -526,16 +530,14 @@ class Etl:
             Target stock ticker.
         """
         try:
-            financials_df = pd.read_csv(financials_file)
+            financials_df = pl.read_csv(financials_file)
+
+            financials_df = financials_df.with_columns(
+                pl.col('datadate').str.to_date("%Y-%m-%d"),
+                pl.col('rdq').str.to_date("%Y-%m-%d"),
+                pl.lit(tic).alias("tic")
+            )
             financials_df = financials_df[self.db_fields["financials"]]
-            financials_df['datadate'] = pd.to_datetime(
-                financials_df['datadate'],
-                format='ISO8601'
-            ).dt.date
-            financials_df['rdq'] = pd.to_datetime(
-                financials_df['rdq'],
-                format='ISO8601'
-            ).dt.date
             self.db_handler.insert_financial_data(financials_df)
         except Exception:
             logger.warning(f"financials data file for {tic} is empty.")

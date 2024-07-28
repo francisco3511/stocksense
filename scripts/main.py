@@ -20,18 +20,18 @@ def main():
         ),
     )
 
-    #handler = Etl(["SW"])
+    handler = Etl([])
     #handler.ingest_all_historical_data()
     #handler.update_index_listings()
-    #handler.set_stocks()
-    #handler.extract()
-    
-    proc = Preprocess()
-    proc.process_data()
-    
-    today = dt.datetime.today().date()
-    proc.save_data(f"proc_data_{today}")
-    
+    handler.set_stocks()
+    handler.extract()
+
+    #proc = Preprocess()
+    #proc.process_data()
+
+    #today = dt.datetime.today().date()
+    #proc.save_data(f"proc_data_{today}")
+
     print('done.')
 
 

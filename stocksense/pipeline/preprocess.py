@@ -1,4 +1,4 @@
-import pandas as pd
+import polars as pl
 import numpy as np
 import datetime as dt
 
@@ -9,7 +9,6 @@ import talib as ta
 
 YEARLY_TRADING_DAYS = 252
 QUARTERLY_TRADING_DAYS = 60
-
 
 class Preprocess():
     """
@@ -28,347 +27,264 @@ class Preprocess():
         Computes financial features for all stocks with
         financial observations recorded on database.
         """
-        
-        # compute index forward returns 
+        # compute index forward returns
         self.index_data = self.process_index_data()
-        
-        # compute all features 
+        # compute all features
         self.data = self.feature_engineering()
-        
-    def process_index_data(self) -> pd.DataFrame:
+
+    def process_index_data(self) -> pl.DataFrame:
         """
         Processes index price data.
 
         Returns
         -------
-        pd.DataFrame
+        pl.DataFrame
             Daily index price data with computed features.
         """
-        
         # load index data
         index_data = self.db_handler.fetch_sp_data()
-        
+
         # parse date
-        index_data['date'] = pd.to_datetime(
-            index_data['date'],
-            format='ISO8601',
-            errors='coerce'
+        index_data = index_data.with_columns(
+            pl.col('date').str.strptime(pl.Date, format='%Y-%m-%d')
         )
-        
-        # compute index forward returns 
-        index_data['index_freturn'] = index_data['adj_close'].transform(
-            lambda x: x.shift(-YEARLY_TRADING_DAYS) / x - 1
+
+        # compute index forward returns
+        index_data = index_data.with_columns(
+            (pl.col('adj_close').shift(-YEARLY_TRADING_DAYS) / pl.col('adj_close') - 1).alias('index_freturn')
         )
+
         return index_data
 
-    def feature_engineering(self) -> pd.DataFrame:
+    def feature_engineering(self) -> pl.DataFrame:
         """
         Compute financial ratios and features for training.
         """
-        
         # get financial data
         df = self.db_handler.fetch_financial_data()
-        #df = df[df.tic.isin(['AAPL', 'AMZN'])]
-        
-        df['prev_rdq'] = df.groupby('tic')['rdq'].shift(periods=1)
-        
-        # convert dates to datetime and sort
-        df['rdq'] = pd.to_datetime(
-            df['rdq'],
-            format='ISO8601',
-            errors='coerce'
-        )
-        df['prev_rdq'] = pd.to_datetime(
-            df['prev_rdq'],
-            format='ISO8601',
-            errors='coerce'
-        )
-        df = df.sort_values(by=['tic', 'rdq'])
-        
+
+        df = df.with_columns(
+            pl.col('rdq').str.strptime(pl.Date, format='%Y-%m-%d')
+        ).with_columns(
+            pl.col('rdq').shift(1).alias('prev_rdq')
+        ).sort(['tic', 'rdq'])
+
         # fetch ALL other stock data from source tables
         info = self.db_handler.fetch_stock_info()
         market_df = self.db_handler.fetch_market_data()
         insider_df = self.db_handler.fetch_insider_data()
-        
+
         # convert and sort market data
-        market_df['date'] = pd.to_datetime(
-            market_df['date'],
-            format='ISO8601',
-            errors='coerce'
-        )
-        market_df = market_df.sort_values(by=['tic', 'date'])
-        
+        market_df = market_df.with_columns(
+            pl.col('date').str.strptime(pl.Date, format='%Y-%m-%d')
+        ).sort(['tic', 'date'])
+
         # compute curr shares outstanding
-        df = df.groupby('tic').apply(
-            lambda x: compute_shares(x)
-        ).reset_index(drop=True)
+        df = df.groupby('tic').apply(lambda x: compute_shares(x)).reset_index(drop=True)
 
         # compute insider trading counts
-        df = df.groupby('tic').apply(
-            lambda x: compute_insider_trading_features(x, x.name, insider_df)
-        ).reset_index(drop=True)
+        df = df.groupby('tic').apply(lambda x: compute_insider_trading_features(x, x['tic'][0], insider_df)).reset_index(drop=True)
 
         # compute financial ratios
-        df = df.groupby('tic').apply(
-            lambda x: compute_financial_ratios(x)
-        ).reset_index(drop=True)
-        
+        df = df.groupby('tic').apply(lambda x: compute_financial_ratios(x)).reset_index(drop=True)
+
         # compute growth metrics
-        df = df.groupby('tic').apply(
-            lambda x: compute_growth_ratios(x)
-        ).reset_index(drop=True)
-        
+        df = df.groupby('tic').apply(lambda x: compute_growth_ratios(x)).reset_index(drop=True)
+
         # compute price/market ratios
-        df = df.groupby('tic').apply(
-            lambda x: compute_market_ratios(x, x.name, market_df, self.index_data)
-        ).reset_index(drop=True)
-        
+        df = df.groupby('tic').apply(lambda x: compute_market_ratios(x, x['tic'][0], market_df, self.index_data)).reset_index(drop=True)
+
         # add id info and select relevant features
-        df = pd.merge(df, info[['tic', 'sector']], how='left', on='tic')
-        
-        df = df[
-            ['obs_date', 'tic', 'sector', 'close']
-            + self.features + self.targets
-        ]
+        df = df.join(info.select(['tic', 'sector']), on='tic', how='left')
+
+        df = df.select(
+            ['obs_date', 'tic', 'sector', 'close'] + self.features + self.targets
+        )
+
         return df
-    
+
     def save_data(self, name: str) -> None:
-        self.data.to_csv(f"data/2_production_data/{name}.csv")
-    
-def compute_shares(df: pd.DataFrame) -> pd.DataFrame:
+        self.data.write_csv(f"data/2_production_data/{name}.csv")
+
+def compute_shares(df: pl.DataFrame) -> pl.DataFrame:
     """
     Computes adjusted common outstanding shares,
     for historical analysis, based on stock-split detection.
 
     Parameters
     ----------
-    df : pd.DataFrame
+    df : pl.DataFrame
         Financial data of a given stock.
 
     Returns
     -------
-    pd.DataFrame
+    pl.DataFrame
         Data with adjusted outstd. shares.
     """
-    
-    # fill nan values
-    df['cshoq'] = df['cshoq'].bfill()
+    df = df.with_columns(
+        pl.col('cshoq').fill_none(strategy='backward')
+    ).with_columns(
+        (pl.col('cshoq') / pl.col('cshoq').shift(1) - 1).alias('pct_change')
+    ).with_columns(
+        (pl.col('pct_change').abs() > 0.25).alias('stock_split')
+    ).with_columns(
+        pl.col('cshoq').alias('adj_shares')
+    )
 
-    # compute the percentage change in common shares outstanding
-    df['pct_change'] = df['cshoq'].pct_change(fill_method=None)
-
-    # flag potential stock splits based on threshold
-    df['stock_split'] = df['pct_change'].abs() > 0.25
-
-    # initialize the adjusted shares column with the original values
-    df['adj_shares'] = df['cshoq']
-    
     common_split_ratios = [
         0.5, 0.33, 0.25, 
         2, 3, 4, 5, 6, 7, 8, 10, 20, 30
     ]
 
-    for i, row in df.iterrows():
-        if df.loc[i, 'stock_split']:
-            # compute the raw split ratio 
-            split_ratio = df.loc[i, 'cshoq'] / df.loc[i-1, 'cshoq']
-            
-            # match to common split ratios
-            closest_split = min(common_split_ratios, key=lambda x:abs(x-split_ratio))
+    for i in range(len(df)):
+        if df[i, 'stock_split']:
+            split_ratio = df[i, 'cshoq'] / df[i - 1, 'cshoq']
+            closest_split = min(common_split_ratios, key=lambda x: abs(x - split_ratio))
             if abs(closest_split - split_ratio) < 0.1:
                 split_ratio = float(closest_split)
-                
-            # apply the split ratio to all previous shares
-            df.loc[:i-1, 'adj_shares'] *= split_ratio
-    
-    return df.drop(['stock_split', 'pct_change'], axis=1)
+            df[:i, 'adj_shares'] *= split_ratio
 
+    return df.drop(['stock_split', 'pct_change'])
 
-def compute_insider_trading_features(
-    df: pd.DataFrame,
-    tic: str,
-    insider_df: pd.DataFrame
-) -> pd.DataFrame:
+def compute_insider_trading_features(df: pl.DataFrame, tic: str, insider_df: pl.DataFrame) -> pl.DataFrame:
     """
     Computes insider trading features
     (i.e. number of insider purchases throughout past quarter)
 
     Parameters
     ----------
-    df : pd.DataFrame
+    df : pl.DataFrame
         Financial data of a given stock.
     tic : str
         Stock ticker.
-    insider_df : pd.DataFrame
+    insider_df : pl.DataFrame
         Global insider trading data.
 
     Returns
     -------
-    pd.DataFrame
+    pl.DataFrame
         Data with insider trading features.
     """
-    
     try:
-        # slice insider data
-        insider_df = insider_df[insider_df.tic == tic]
+        insider_df = insider_df.filter(pl.col('tic') == tic)
 
-        df['key'] = 1
-        insider_df['key'] = 1
-        merged_df = pd.merge(df, insider_df, on='key').drop('key', axis=1)
+        df = df.with_columns(pl.lit(1).alias('key'))
+        insider_df = insider_df.with_columns(pl.lit(1).alias('key'))
+        merged_df = df.join(insider_df, on='key').drop('key')
 
-        # filter the merged DataFrame
-        count_p = merged_df[
-            (merged_df['filling_date'] >= merged_df['prev_rdq']) & 
-            (merged_df['filling_date'] < merged_df['rdq']) & 
-            (merged_df['transaction_type'] == 'P - Purchase')
-        ].groupby('rdq').size().reset_index(name='n_purchases')
-        
-        # set nr of insider purchases in last quarter
-        df = pd.merge(df, count_p, on='rdq', how='left')
-        df['n_purchases'] = df['n_purchases'].fillna(0)
+        count_p = merged_df.filter(
+            (pl.col('filling_date') >= pl.col('prev_rdq')) &
+            (pl.col('filling_date') < pl.col('rdq')) &
+            (pl.col('transaction_type') == 'P - Purchase')
+        ).groupby('rdq').agg(pl.count('filling_date').alias('n_purchases'))
+
+        df = df.join(count_p, on='rdq', how='left')
+        df = df.with_columns(pl.col('n_purchases').fill_none(0))
     except Exception:
-        df['n_purchases'] = np.nan
+        df = df.with_columns(pl.lit(np.nan).alias('n_purchases'))
+    
     return df
 
-
-def compute_financial_ratios(df: pd.DataFrame) -> pd.DataFrame:
+def compute_financial_ratios(df: pl.DataFrame) -> pl.DataFrame:
     """
     Computes a selected number of financial ratios.
 
     Parameters
     ----------
-    df : pd.DataFrame
+    df : pl.DataFrame
         Financial data of a given stock.
 
     Returns
     -------
-    pd.DataFrame
+    pl.DataFrame
         Data with additional columns.
     """
-    df['roa'] = df['niq'].rolling(4).sum() / df['atq'].rolling(2).mean()
-    df['roe'] = df['niq'].rolling(4).sum() / df['seqq'] # return on sh equity
-    df['gpm'] = (df['saleq'] - df['cogsq']) / df['saleq'] # gross profit margin
-    df['ebitdam'] = df['ebitdaq'] / df['saleq'] # ebitda margin
-    df['cfm'] = df['oancfq'] / df['saleq'] # cash flow margin
-    df['cr'] = df['actq'] / df['lctq'] # current ratio
-    df['qr'] = (df['rectq'] + df['cheq']) / df['lctq'] # quick ratio
-    df['csr'] = df['cheq'] / df['lctq'] # cash ratio
-    df['dr'] = df['ltq'] / df['atq'] # debt ratio
-    df['der'] = df['ltq'] / df['seqq'] # debt-to-Equity ratio
-    df['debitda'] = df['ltq'] / df['ebitdaq'] # debt to ebitda
-    df['ltda'] = df['dlttq'] / df['atq'] # long term debt to assets
-    df['ltcr'] = (df['oancfq'] - df['capxq']) / df['dlttq'] # long term debt coverage
-    df['itr'] = df['saleq'] / df['invtq'].rolling(2).mean() # inventory turnover ratio
-    df['rtr'] = df['saleq'] / df['rectq'].rolling(2).mean() # receivables turnover ratio
-    df['atr'] = df['saleq'] / df['atq'].rolling(2).mean() # asset turnover ratio
+    df = df.with_columns([
+        (pl.col('niq').rolling_sum(4) / pl.col('atq').rolling_mean(2)).alias('roa'),
+        (pl.col('niq').rolling_sum(4) / pl.col('seqq')).alias('roe'),
+        ((pl.col('saleq') - pl.col('cogsq')) / pl.col('saleq')).alias('gpm'),
+        (pl.col('ebitdaq') / pl.col('saleq')).alias('ebitdam'),
+        (pl.col('oancfq') / pl.col('saleq')).alias('cfm'),
+        (pl.col('actq') / pl.col('lctq')).alias('cr'),
+        ((pl.col('rectq') + pl.col('cheq')) / pl.col('lctq')).alias('qr'),
+        (pl.col('cheq') / pl.col('lctq')).alias('csr'),
+        (pl.col('ltq') / pl.col('atq')).alias('dr'),
+        (pl.col('ltq') / pl.col('seqq')).alias('der'),
+        (pl.col('ltq') / pl.col('ebitdaq')).alias('debitda'),
+        (pl.col('dlttq') / pl.col('atq')).alias('ltda'),
+        ((pl.col('oancfq') - pl.col('capxq')) / pl.col('dlttq')).alias('ltcr'),
+        (pl.col('saleq') / pl.col('invtq').rolling_mean(2)).alias('itr'),
+        (pl.col('saleq') / pl.col('rectq').rolling_mean(2)).alias('rtr'),
+        (pl.col('saleq') / pl.col('atq').rolling_mean(2)).alias('atr')
+    ])
     return df
 
-
-def compute_growth_ratios(df: pd.DataFrame) -> pd.DataFrame:
+def compute_growth_ratios(df: pl.DataFrame) -> pl.DataFrame:
     """
     Compute rolling growth statistics.
 
     Parameters
     ----------
-    df : pd.DataFrame
+    df : pl.DataFrame
         Financial data of a given stock.
 
     Returns
     -------
-    pd.DataFrame
+    pl.DataFrame
         Data with additional columns.
     """
-    
-    df['ni_qoq'] = (df['niq'] - df['niq'].shift(periods=1)) / df['niq'].shift(periods=1)
-    df['ni_yoy'] = (df['niq'] - df['niq'].shift(periods=4)) / df['niq'].shift(periods=4)
-    df['ni_2y'] = (df['niq'] - df['niq'].shift(periods=8)) / df['niq'].shift(periods=8)
-    df['rev_yoy'] = (df['saleq'] - df['saleq'].shift(periods=4)) / df['saleq'].shift(periods=4)
-    df['ltd_yoy'] = (df['dlttq'] - df['dlttq'].shift(periods=4)) / np.abs(df['dlttq'].shift(periods=4))
-    df['dr_yoy'] = (df['dr'] - df['dr'].shift(periods=4)) / np.abs(df['dr'].shift(periods=4))
+    df = df.with_columns([
+        ((pl.col('niq') - pl.col('niq').shift(1)) / pl.col('niq').shift(1)).alias('ni_qoq'),
+        ((pl.col('niq') - pl.col('niq').shift(4)) / pl.col('niq').shift(4)).alias('ni_yoy'),
+        ((pl.col('niq') - pl.col('niq').shift(8)) / pl.col('niq').shift(8)).alias('ni_2y'),
+        ((pl.col('saleq') - pl.col('saleq').shift(4)) / pl.col('saleq').shift(4)).alias('rev_yoy'),
+        ((pl.col('dlttq') - pl.col('dlttq').shift(4)) / pl.col('dlttq').shift(4).abs()).alias('ltd_yoy'),
+        ((pl.col('dr') - pl.col('dr').shift(4)) / pl.col('dr').shift(4).abs()).alias('dr_yoy')
+    ])
     return df
 
-def compute_market_ratios(
-    df: pd.DataFrame,
-    tic: str,
-    market_df: pd.DataFrame,
-    index_df: pd.DataFrame
-) -> pd.DataFrame:
+def compute_market_ratios(df: pl.DataFrame, tic: str, market_df: pl.DataFrame, index_df: pl.DataFrame) -> pl.DataFrame:
     """
     Compute market related ratios.
 
     Parameters
     ----------
-    df : pd.DataFrame 
+    df : pl.DataFrame 
         Financial data of a given stock.
     tic : str
         Stock ticker.
-    market_df : pd.DataFrame
+    market_df : pl.DataFrame
         Market data.
-    index_df : pd.DataFrame
+    index_df : pl.DataFrame
         Index price data.
 
     Returns
     -------
-    pd.DataFrame
+    pl.DataFrame
         Main dataset with added ratios.
     """
-    
-    # slice insider data
-    market_df = market_df[market_df.tic == tic]
+    market_df = market_df.filter(pl.col('tic') == tic)
 
-    # compute forward returns 
-    market_df['freturn'] = market_df['adj_close'].transform(
-        lambda x: x.shift(-YEARLY_TRADING_DAYS) / x - 1
-    )
-    # compute momentum indicators
-    market_df['rsi_9d'] = ta.RSI(market_df['close'], timeperiod=9)
-    market_df['rsi_30d'] = ta.RSI(market_df['close'], timeperiod=30)
-            
-    # price growth ratios
-    market_df['price_yoy'] = (
-        (market_df['close'] - market_df['close'].shift(periods=YEARLY_TRADING_DAYS)) /
-        market_df['close'].shift(periods=YEARLY_TRADING_DAYS)
-    )
-    market_df['price_qoq'] = (
-        (market_df['close'] - market_df['close'].shift(periods=QUARTERLY_TRADING_DAYS)) /
-        market_df['close'].shift(periods=QUARTERLY_TRADING_DAYS)
-    )
+    market_df = market_df.with_columns([
+        (pl.col('adj_close').shift(-YEARLY_TRADING_DAYS) / pl.col('adj_close') - 1).alias('freturn'),
+        (ta.RSI(market_df['close'], timeperiod=9)).alias('rsi_9d'),
+        (ta.RSI(market_df['close'], timeperiod=30)).alias('rsi_30d'),
+        ((pl.col('close') - pl.col('close').shift(YEARLY_TRADING_DAYS)) / pl.col('close').shift(YEARLY_TRADING_DAYS)).alias('price_yoy'),
+        ((pl.col('close') - pl.col('close').shift(QUARTERLY_TRADING_DAYS)) / pl.col('close').shift(QUARTERLY_TRADING_DAYS)).alias('price_qoq')
+    ])
 
-    # merge market data
-    df = pd.merge_asof(
-        df, 
-        market_df.drop(['tic', 'volume'], axis=1), 
-        left_on='rdq', 
-        right_on='date', 
-        direction='forward',
-        tolerance=dt.timedelta(days=7)
-    )
-    
-    # merge index data
-    df = pd.merge_asof(
-        df, 
-        index_df[['date', 'index_freturn']], 
-        left_on='rdq', 
-        right_on='date', 
-        direction='forward',
-        tolerance=dt.timedelta(days=7)
-    )
-    
-    # set observation date
-    df['obs_date'] = df['date_x']
-    
-    # adj forward returns by index returns
-    df['adj_freturn'] = df['freturn'] - df['index_freturn']
-    df['adj_fperf'] = (df['adj_freturn'] > 0.0).astype(int)
-    df['adj_fperf_20'] = (df['adj_freturn'] > 0.2).astype(int)
-    
-    # compute eps and p/e
-    df['eps'] = df['niq'].rolling(4).sum() / df['adj_shares']
-    df['pe'] = df['close'] / df['eps']
-    
-    # compute ev to ebitda
-    df['mkt_cap'] = df['close'] * df['adj_shares']
-    df['ev'] = df['mkt_cap'] + df['ltq'] - df['cheq']
-    df['ev_ebitda'] = df['ev'] / df['ebitdaq'].rolling(4).sum() 
+    df = df.join_asof(market_df.drop(['tic', 'volume']), on='rdq', by='date', strategy='forward', tolerance=dt.timedelta(days=7))
+    df = df.join_asof(index_df.select(['date', 'index_freturn']), on='rdq', by='date', strategy='forward', tolerance=dt.timedelta(days=7))
+
+    df = df.with_columns([
+        pl.col('date').alias('obs_date'),
+        (pl.col('freturn') - pl.col('index_freturn')).alias('adj_freturn'),
+        (pl.col('adj_freturn') > 0).cast(pl.Int8).alias('adj_fperf'),
+        (pl.col('adj_freturn') > 0.2).cast(pl.Int8).alias('adj_fperf_20'),
+        (pl.col('niq').rolling_sum(4) / pl.col('adj_shares')).alias('eps'),
+        (pl.col('close') / pl.col('eps')).alias('pe'),
+        (pl.col('close') * pl.col('adj_shares')).alias('mkt_cap'),
+        (pl.col('mkt_cap') + pl.col('ltq') - pl.col('cheq')).alias('ev'),
+        (pl.col('ev') / pl.col('ebitdaq').rolling_sum(4)).alias('ev_ebitda')
+    ])
     return df
-

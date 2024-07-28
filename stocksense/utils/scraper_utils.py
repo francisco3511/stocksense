@@ -2,7 +2,7 @@ import random
 import time
 import requests
 import logging
-import pandas as pd
+import polars as pl
 import numpy as np
 import datetime as dt
 import yfinance as yf
@@ -22,7 +22,6 @@ logging.getLogger('yfinance').setLevel(logging.CRITICAL)
 class CachedLimiterSession(CacheMixin, LimiterMixin, Session):
     pass
 
-
 def get_session():
     """
     Create session for yfinance queries.
@@ -32,7 +31,6 @@ def get_session():
     CachedLimiterSession
         Session object.
     """
-
     session = CachedLimiterSession(
         # max 1 request per 5 seconds
         limiter=Limiter(RequestRate(2, Duration.SECOND*5)),
@@ -42,7 +40,6 @@ def get_session():
     session.headers['User-agent'] = 'my-program/1.0'
     return session
 
-
 def get_stock_splits(tic):
     """
     Get stock splits.
@@ -50,38 +47,34 @@ def get_stock_splits(tic):
     session = get_session()
     t = yf.Ticker(tic, session=session)
     splits = t.get_actions()
-    splits = splits.loc[splits['Stock Splits'] > 0]
+    splits = splits[splits['Stock Splits'] > 0]
     splits = splits.reset_index()
-    splits['Date'] = pd.to_datetime(splits['Date'], format='ISO8601').dt.date
+    splits['Date'] = pl.from_pandas(splits)['Date'].str.to_date(format='%Y-%m-%d')
     return splits
-
 
 def correct_splits(data, tic, col):
     """
     Correct market data, taking into account
     stock splits, in order to get accurate trackback.
     """
-
     # get stock splits
     splits = get_stock_splits(tic)
-    df = data.copy()
+    df = data.clone()
 
     for date, row in splits.iterrows():
         n = float(row['Stock Splits'])
-        df.loc[(df.datadate < row['Date']), col] /= n
-
+        df = df.with_columns(
+            pl.when(pl.col('datadate') < row['Date']).then(pl.col(col) / n).otherwise(pl.col(col)).alias(col)
+        )
     return df
 
-
-def scrape_sp500_stock_info() -> pd.DataFrame:
+def scrape_sp500_stock_info() -> pl.DataFrame:
     """
-    List S&P500 stock info from wiki page and return pandas dataframe.
+    List S&P500 stock info from wiki page and return Polars dataframe.
     """
-
     resp = requests.get(
         'http://en.wikipedia.org/wiki/List_of_S%26P_500_companies'
     )
-
     soup = bs(resp.text, 'lxml')
     table = soup.find('table', {'class': 'wikitable sortable'})
 
@@ -101,24 +94,14 @@ def scrape_sp500_stock_info() -> pd.DataFrame:
         data["name"].append(security)
         data["sector"].append(sector)
 
-    df = pd.DataFrame(data)
-    df['tic'] = df['tic'].str.replace('.', '-')
+    df = pl.DataFrame(data)
+    df = df.with_columns(pl.col('tic').str.replace(".", "-", literal=True))
     return df
 
-
-def scrape_fundamental_data_macrotrends(
-    ticker: str,
-    start: dt.date,
-    end: dt.date
-) -> None:
+def scrape_fundamental_data_macrotrends(ticker: str, start: dt.date, end: dt.date) -> None:
     raise Exception("Not implemented.")
 
-
-def scrape_fundamental_data_yahoo(
-    ticker: str,
-    start: dt.date,
-    end: dt.date
-) -> pd.DataFrame:
+def scrape_fundamental_data_yahoo(ticker: str, start: dt.date, end: dt.date) -> pl.DataFrame:
     """
     Scraps fundamental data from Yahoo Finance using yfinance lib, searching
     for financial records released between two dates.
@@ -134,7 +117,7 @@ def scrape_fundamental_data_yahoo(
 
     Returns
     -------
-    pd.DataFrame
+    pl.DataFrame
         Financial report data table.
 
     Raises
@@ -142,7 +125,6 @@ def scrape_fundamental_data_yahoo(
     Exception
         If no financial records are available.
     """
-
     session = get_session()
     t = yf.Ticker(ticker, session=session)
 
@@ -150,131 +132,131 @@ def scrape_fundamental_data_yahoo(
     fields_to_keep = get_config("data")["yahoo"]
 
     # retrieve 3 main documents
-    is_df = t.quarterly_income_stmt.T
-    bs_df = t.quarterly_balance_sheet.T
-    cf_df = t.quarterly_cashflow.T
+    is_df = pl.from_pandas(t.quarterly_income_stmt.T.reset_index())
+    bs_df = pl.from_pandas(t.quarterly_balance_sheet.T.reset_index())
+    cf_df = pl.from_pandas(t.quarterly_cashflow.T.reset_index())
 
     # set timer
     time.sleep(random.uniform(1, MAX_TIMER))
 
-    is_df.index = pd.to_datetime(is_df.index)
-    bs_df.index = pd.to_datetime(bs_df.index)
-    cf_df.index = pd.to_datetime(cf_df.index)
+    # parse dates
+    is_df = is_df.with_columns(
+        pl.col('index').dt.date().alias('index')
+    ).sort('index')
+    bs_df = bs_df.with_columns(
+        pl.col('index').dt.date().alias('index')
+    ).sort('index')
+    cf_df = cf_df.with_columns(
+        pl.col('index').dt.date().alias('index')
+    ).sort('index')
 
-    # merge the data
-    df = pd.merge_asof(
-        is_df.sort_index(),
-        bs_df.sort_index(),
-        left_index=True,
-        right_index=True,
-        direction='forward',
+    # merge the data based on dates
+    df = is_df.join_asof(
+        bs_df,
+        on='index',
+        strategy='forward',
+        tolerance=dt.timedelta(days=40)
+    ).join_asof(
+        cf_df,
+        on='index',
+        strategy='forward',
         tolerance=dt.timedelta(days=40)
     )
-    df = pd.merge_asof(
-        df.sort_index(),
-        cf_df.sort_index(),
-        left_index=True,
-        right_index=True,
-        direction='forward',
-        tolerance=dt.timedelta(days=40)
-    ).reset_index()
 
     # validate columns and create placeholders
     for c in list(fields_to_keep.keys()):
         if c not in df.columns:
-            df[c] = np.nan
+            df = df.with_columns([
+                pl.lit(None).alias(c),
+            ])
 
     # filter columns
-    df = df[list(fields_to_keep.keys())]
+    df = df.select(list(fields_to_keep.keys()))
 
-    df = df.rename(columns=fields_to_keep)
-    df['datadate'] = pd.to_datetime(df['datadate'], format='ISO8601').dt.date
-    df = df[(df.datadate >= start) & (df.datadate < end)]
+    df = df.rename(fields_to_keep)
+    df = df.filter(
+        (pl.col('datadate') >= start) & 
+        (pl.col('datadate') < end
+    ))
 
-    if is_df.empty:
+    if df.is_empty():
         raise Exception("Empty financials")
 
-    for col in df.columns[1:]:
-        df.loc[df[col] == '', col] = None
-        df[col] = df[col].astype(float)
+    for c in df.columns[1:]:
+        df = df.with_columns(
+            pl.col(c).cast(pl.Float64)
+        )
+        df = df.with_columns((pl.col(c) / 1000000).round(3).alias(c))
 
     # data corrections
-    df[df.columns[1:]] /= 1000000
-    df['dvq'] = - df['dvq']
-    df['capxq'] = - df['capxq']
-    df = df.round(3)
-    df = df.drop_duplicates(subset=['datadate']).sort_values(by=['datadate'])
-    df['tic'] = ticker
-    return df
+    df = df.with_columns([
+        (-pl.col('dvq')).alias('dvq'),
+        (-pl.col('capxq')).alias('capxq')
+    ])
 
+    df = df.unique(subset=['datadate']).sort('datadate')
+    df = df.with_columns(pl.lit(ticker).alias('tic'))
+    return df
 
 def get_market_data(ticker, start):
     """
     Scrape daily market data for a stock, until present.
     """
-
     # create session and get data
     session = get_session()
     t = yf.Ticker(ticker, session=session)
-    df = t.history(
+
+    # get historical data
+    df = pl.from_pandas(t.history(
         start=start,
         auto_adjust=False
-    ).reset_index(drop=False)
+    ).reset_index(drop=False))
 
     # set timer
     time.sleep(random.uniform(1, MAX_TIMER))
 
     # check if data was returned
-    if df.empty:
+    if df.is_empty():
         raise Exception("Empty DataFrame")
 
     # reformat data
-    df['Date'] = pd.to_datetime(df['Date'], format='ISO8601').dt.date
-    df = df[['Date', 'Close', 'Adj Close', 'Volume']]
-    df.columns = ['date', 'close', 'adj_close', 'volume']
-    df['tic'] = ticker
+    df = df.with_columns([
+        pl.col('Date').dt.date().alias('date'),
+        pl.col('Close').alias('close'),
+        pl.col('Adj Close').alias('adj_close'),
+        pl.col('Volume').alias('volume')
+    ])
+    df = df.select(['date', 'close', 'adj_close', 'volume']).with_columns(pl.lit(ticker).alias('tic'))
     return df
 
-
-def get_earnings_dates(tic: str,  start: dt.date, end: dt.date):
+def get_earnings_dates(tic: str, start: dt.date, end: dt.date):
     """
     Scrape earnings dates and eps surprise.
     """
-
     n_quarters = int((end - start).days / 90) + 20
 
     session = get_session()
     t = yf.Ticker(tic, session=session)
-    df = t.get_earnings_dates(limit=n_quarters).reset_index()
+    df = pl.from_pandas(t.get_earnings_dates(limit=n_quarters).reset_index())
     time.sleep(random.uniform(1, MAX_TIMER))
 
-    df = df.rename(columns={
+    df = df.rename({
         "Earnings Date": "rdq",
         "Surprise(%)": "surprise_pct"
     })
 
     # format dates and filter data
-    df = df[['rdq', 'surprise_pct']]
-    df['rdq'] = pd.to_datetime(df['rdq'], format='ISO8601').dt.date
-    df = df[(df.rdq >= start) & (df.rdq < end)]
-    df = df.drop_duplicates(subset=['rdq'])
-    df.sort_values(by=['rdq'], inplace=True)
-    df.dropna(subset=['surprise_pct'], inplace=True)
-    df.dropna(subset=['rdq'], inplace=True)
+    df = df.select(['rdq', 'surprise_pct'])
+    df = df.with_columns(pl.col('rdq').dt.date())
+    df = df.filter((pl.col('rdq') >= start) & (pl.col('rdq') < end))
+    df = df.unique(subset=['rdq']).sort('rdq').drop_nulls(subset=['surprise_pct', 'rdq'])
 
-    if df.empty:
+    if df.is_empty():
         raise Exception("Empty DataFrame")
 
     return df
 
-
-def get_financial_data(
-    ticker: str,
-    start: dt.date,
-    end: dt.date,
-    method: str = "yahoo"
-) -> pd.DataFrame:
-
+def get_financial_data(ticker: str, start: dt.date, end: dt.date, method: str = "yahoo") -> pl.DataFrame:
     if method == "yahoo":
         df = scrape_fundamental_data_yahoo(ticker, start, end)
     else:
@@ -284,31 +266,25 @@ def get_financial_data(
     earn_dates = get_earnings_dates(ticker, start, end)
 
     # ensure correct date typing for merge asof (only datetime supported)
-    df['datadate'] = pd.to_datetime(df['datadate'], format="ISO8601")
-    earn_dates['rdq'] = pd.to_datetime(earn_dates['rdq'], format="ISO8601")
+    df = df.with_columns(pl.col('datadate').dt.date()).sort('datadate')
+    earn_dates = earn_dates.with_columns(pl.col('rdq').dt.date()).sort('rdq')
 
     # merge data
-    df = pd.merge_asof(
-        df,
+    df = df.join_asof(
         earn_dates,
         left_on='datadate',
         right_on='rdq',
-        direction='forward',
+        strategy='forward',
         tolerance=dt.timedelta(days=80)
     )
-
-    # ensure correct date typing
-    df['datadate'] = pd.to_datetime(df['datadate'], format="ISO8601").dt.date
-    df['rdq'] = pd.to_datetime(df['rdq'], format="ISO8601").dt.date
     
     # in cases where data is found but no release dt, defer to today
     today = dt.datetime.now().date()
-    df['rdq'] = df['rdq'].fillna(today)
+    df = df.with_columns(pl.when(pl.col('rdq').is_null()).then(today).otherwise(pl.col('rdq')).alias('rdq'))
 
     return df
 
-
-def get_stock_insider_data(ticker: str) -> pd.DataFrame:
+def get_stock_insider_data(ticker: str) -> pl.DataFrame:
     """
     Scrape OpenInsider.com insider trading data for a given stock.
 
@@ -319,7 +295,7 @@ def get_stock_insider_data(ticker: str) -> pd.DataFrame:
 
     Returns
     -------
-    pd.DataFrame
+    pl.DataFrame
         Insider trading data table.
 
     Raises
@@ -327,7 +303,6 @@ def get_stock_insider_data(ticker: str) -> pd.DataFrame:
     ValueError
         When scraping process fails.
     """
-
     # select fields to retrieve
     field_names = [
         'filling_date',
@@ -380,24 +355,22 @@ def get_stock_insider_data(ticker: str) -> pd.DataFrame:
             data.append(insider_data)
 
         # data adjustments
-        df = pd.DataFrame(data, columns=field_names)
-        df['tic'] = ticker
+        df = pl.DataFrame(data, schema=field_names, orient='row')
+        df = df.with_columns(pl.lit(ticker).alias('tic'))
 
-        if df.empty:
+        if df.is_empty():
             raise Exception("No insider data available")
 
         # format dates and sort
-        df['filling_date'] = pd.to_datetime(
-            df['filling_date'], format="ISO8601"
-        ).dt.date
-        df['trade_date'] = pd.to_datetime(
-            df['trade_date'], format="ISO8601"
-        ).dt.date
-        df = df.sort_values(by='filling_date', ascending=True)
+        df = df.with_columns([
+            pl.col('filling_date').str.to_datetime("%Y-%m-%d %H:%M:%S").dt.date(),
+            pl.col('trade_date').str.to_date("%Y-%m-%d")
+        ])
+
+        df = df.sort('filling_date')
         return df
     except Exception as e:
         raise e
-
 
 def get_stock_metadata(ticker: str) -> dict:
     """
@@ -418,7 +391,6 @@ def get_stock_metadata(ticker: str) -> dict:
     Exception
         When no data was found.
     """
-
     # query yahoo finance and get metadata
     session = get_session()
     stock = yf.Ticker(ticker, session=session)
@@ -450,9 +422,7 @@ def get_stock_metadata(ticker: str) -> dict:
         record['forward_pe'] = metadata['forwardPE']
     return record
 
-
 def get_exchange_stocks(exc_lis):
-
     headers = {
         'authority': 'api.nasdaq.com',
         'accept': 'application/json, text/plain, */*',
@@ -483,10 +453,10 @@ def get_exchange_stocks(exc_lis):
             params=params
         )
         data = r.json()['data']
-        df = pd.DataFrame(data['rows'], columns=data['headers'])
-        df = df.loc[df.marketCap != "0.00", ["symbol", "name", "sector"]]
-        df = df[~df['symbol'].str.contains(r"\.|\^")]
+        df = pl.DataFrame(data['rows'])
+        df = df.filter(pl.col('marketCap') != "0.00").select(["symbol", "name", "sector"])
+        df = df.filter(~pl.col('symbol').str.contains(r"\.|\^"))
         stock_list.append(df)
         time.sleep(1)
 
-    return pd.concat(stock_list).drop_duplicates(subset=['symbol'])
+    return pl.concat(stock_list).unique(subset=['symbol'])

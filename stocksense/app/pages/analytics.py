@@ -13,6 +13,7 @@ from st_aggrid.shared import JsCode
 import talib as ta
 
 from database_handler import DatabaseHandler
+from pipeline import Etl, Preprocess
 
 
 MARGIN = dict(l=0,r=10,b=10,t=25)
@@ -20,14 +21,14 @@ MARGIN = dict(l=0,r=10,b=10,t=25)
 # JsCode to highlight cells when surprise < 0
 cellsytle_jscode = JsCode(
     """
-        function(params) {
-            if (params.data.Surprise < 0) {
-                return {
-                    'color': 'white',
-                    'backgroundColor': '#A93226'
-                }
+    function(params) {
+        if (params.data.Surprise < 0) {
+            return {
+                'color': 'white',
+                'backgroundColor': '#A93226'
             }
-        };
+        }
+    };
     """
 )
 
@@ -37,15 +38,12 @@ st.set_page_config(layout='wide', page_title='StockSense', page_icon='📈')
 def list_stocks():
     
     # read control file
-    control_df = pd.read_csv(
-        './data/1_work_data/SP500.csv',
-        sep=';'
-    )
+    stocks = DatabaseHandler().fetch_stock_info()
 
     # return SP500 constituents
-    return control_df.loc[
-        control_df['Status'] == True,  # noqa: E712
-        'Symbol'
+    return stocks.loc[
+        stocks.spx_status == True,  # noqa: E712
+        'tic'
     ].values.tolist()
 
 
@@ -69,21 +67,25 @@ def categorize_number(number):
 
 @st.cache_data(show_spinner="Fetching stock data...", max_entries=10)
 def load_stock_data(ticker, update=False):
-    
-    # get stock data handler
-    stock = Stock(ticker)
-    
-    # get stock info
-    try:
-        info = stock.get_metadata()
-    except Exception:
-        info = get_stock_metadata(ticker)
-    
+
     if update:
         # update stock data
-        stock.update_stock_data(method='yh')
+        handler = Etl([ticker])
+        handler.extract()
         
-    return stock, info
+    # get stock data handler
+    info = DatabaseHandler().fetch_stock_info(ticker)
+    metadata = DatabaseHandler().fetch_metadata(ticker)
+    mkt_df = DatabaseHandler().fetch_market_data(ticker)
+    fin_df = DatabaseHandler().fetch_financial_data(ticker)
+    index_df = DatabaseHandler().fetch_sp_data()
+    
+    # calculate the MAs for graphs
+    mkt_df['SMA-50'] = ta.SMA(mkt_df['close'],timeperiod=50)
+    mkt_df['SMA-200'] = ta.SMA(mkt_df['close'], timeperiod=200)
+        
+    return mkt_df, fin_df
+
 
 
 def format_number(number):
@@ -140,16 +142,10 @@ def main():
     update = st.sidebar.button("Fetch updates")
 
     # retrieve market data
-    stock, info = load_stock_data(ticker, update)
-
-    # get market and financial data
-    market_df = stock.get_market_data()
-
-    # Calculate the MAs for graphs
-    market_df['SMA-50'] = ta.SMA(market_df['Close'],timeperiod=50)
-    market_df['SMA-200'] = ta.SMA(market_df['Close'], timeperiod=200)
-
-    fin_df = stock.get_financial_data()
+    info, market_df, fin_df = load_stock_data(ticker, update)
+    
+    name = info[0]
+    tic = info[1]
 
     fin_df['Category'] = fin_df['surprise_pct'].apply(categorize_number)
 
@@ -162,6 +158,8 @@ def main():
     start_y1 = max_date + pd.DateOffset(months=-12)
     start_all = min_date
     end_date = max_date
+    
+    start_date = start_all
 
     match selected_range:
         case '1M':
@@ -172,38 +170,36 @@ def main():
             start_date = start_ytd
         case '1Y' :
             start_date = start_y1
-        case default:
-            start_date = start_all
 
-    # Subheader with company name and symbol
-    st.session_state.page_subheader = f'{stock.name} ({stock.tic})'
+    # subheader with company name and symbol
+    st.session_state.page_subheader = f'{name} ({tic})'
     st.subheader(st.session_state.page_subheader)
     st.divider()
 
     tab1, tab2, tab3 = st.tabs(["Market", "Financials", "Stocksensing"])
 
-    # Market tab
+    # market tab
     with tab1:
         
-        # Filter dates
-        mdf = market_df[(market_df['Date'] >= start_date) & (market_df['Date'] <= end_date)]
+        # filter dates
+        mdf = market_df[(market_df['date'] >= start_date) & (market_df['date'] <= end_date)]
 
         col1, col2, col3, col4 = st.columns([1,1,1,4.5])
         with col1:
             st.text('Sector')
-            st.text(info['industry'])
+            #st.text(info['industry'])
             st.divider()
             st.text('Market Cap')
-            st.text(format_number(info['marketCap']))
+            #st.text(format_number(info['marketCap']))
             st.divider()
             st.text('Previous Close')
-            st.text(info['previousClose'])
+            #st.text(info['previousClose'])
             st.divider()
             st.text('Beta')
-            st.text('{:.2f}'.format(info['beta']))
+            #st.text('{:.2f}'.format(info['beta']))
         with col2:
             st.text('Average Volume')
-            st.text('{:,}'.format(info['averageVolume']))
+            #st.text('{:,}'.format(info['averageVolume']))
             st.divider()
             st.text('Fwd Div & Yield')
             if 'dividendRate' in info:
@@ -245,8 +241,8 @@ def main():
             # Plot the Price chart
             fig.add_trace(
                 go.Scatter(
-                    x=mdf['Date'],
-                    y=mdf['Adj Close'],
+                    x=mdf['date'],
+                    y=mdf['adj_close'],
                     name='Price',
                     marker_color='orangered',
                     mode='lines'
