@@ -25,18 +25,18 @@ class DatabaseHandler:
     Wrapper for database handling.
     """
 
-    def __init__(self, db_path: str = 'data/database/stocks.db'):
+    def __init__(self, db_path: str = 'data/database/stock_db.db'):
         self.db = DatabaseConnection(Path(db_path))
         create_tables(self.db.get_connection())
 
-    def insert_stock_info(self, data: pl.DataFrame):
+    def insert_stock(self, data: pl.DataFrame):
         data = data.with_columns(
             data['last_update'].dt.strftime('%Y-%m-%d'),
         )
-        insert_data(self.db.get_connection(), "stocks", data)
+        insert_data(self.db.get_connection(), "stock", data)
 
-    def insert_metadata(self, record: dict):
-        insert_record(self.db.get_connection(), "metadata", record)
+    def insert_info(self, record: dict):
+        insert_record(self.db.get_connection(), "stock_info", record)
 
     def insert_market_data(self, data: pl.DataFrame):
         data = data.with_columns(data['date'].dt.strftime('%Y-%m-%d').alias('date'))
@@ -47,7 +47,7 @@ class DatabaseHandler:
             data['rdq'].dt.strftime('%Y-%m-%d'),
             data['datadate'].dt.strftime('%Y-%m-%d')
         )
-        insert_data(self.db.get_connection(), "financials", data)
+        insert_data(self.db.get_connection(), "financial", data)
 
     def insert_insider_data(self, data: pl.DataFrame):
         data = data.with_columns(
@@ -56,25 +56,25 @@ class DatabaseHandler:
         )
         insert_data(self.db.get_connection(), "insider", data)
 
-    def insert_sp_data(self, data: pl.DataFrame):
+    def insert_index_data(self, data: pl.DataFrame):
         data = data.with_columns(data['date'].dt.strftime('%Y-%m-%d'))
         insert_data(self.db.get_connection(), "sp500", data)
         
-    def delete_stock_data(self, tic: str):
-        delete_data(self.db.get_connection(), "stocks", {"tic": tic})
+    def delete_stock(self, tic: str):
+        delete_data(self.db.get_connection(), "stock", {"tic": tic})
 
-    def update_stock_data(self, tic: str, update_values: dict):
+    def update_stock(self, tic: str, update_values: dict):
         update_data(
             self.db.get_connection(),
-            "stocks",
+            "stock",
             update_values,
             {"tic": tic}
         )
 
     def count_stocks(self) -> int:
-        return count_data(self.db.get_connection(), "stocks", "tic")
+        return count_data(self.db.get_connection(), "stock", "tic")
 
-    def fetch_stock_info(
+    def fetch_stock(
         self,
         tic: Optional[int] = None
     ) -> Union[pl.DataFrame, tuple]:
@@ -82,26 +82,26 @@ class DatabaseHandler:
         conn = self.db.get_connection()
         
         if tic:
-            df = fetch_data(conn, "stocks", {"tic": tic})
+            df = fetch_data(conn, "stock", {"tic": tic})
         else:
-            df = fetch_data(self.db.get_connection(), "stocks")
+            df = fetch_data(conn, "stock")
         
         df = df.with_columns(
             pl.col('last_update').str.to_date(format='%Y-%m-%d')
         )
         return df
 
-    def fetch_metadata(
+    def fetch_info(
         self,
         tic: Optional[int] = None
     ) -> pl.DataFrame:
         
         if tic:
-            # fetch metadata record of a single stock
-            return fetch_record(self.db.get_connection(), "metadata", {"tic": tic})
+            # fetch info record of a single stock
+            return fetch_record(self.db.get_connection(), "stock_info", {"tic": tic})
         else:
-            # fetch all metadata
-            return fetch_data(self.db.get_connection(), "metadata")
+            # fetch all stock aux information
+            return fetch_data(self.db.get_connection(), "stock_info")
 
     def fetch_market_data(
         self,
@@ -128,9 +128,9 @@ class DatabaseHandler:
     ) -> pl.DataFrame:
         
         if tic:
-            df = fetch_data(self.db.get_connection(), "financials", {"tic": tic})
+            df = fetch_data(self.db.get_connection(), "financial", {"tic": tic})
         else:
-            df = fetch_data(self.db.get_connection(), "financials")
+            df = fetch_data(self.db.get_connection(), "financial")
 
         # format dates
         df = df.with_columns([

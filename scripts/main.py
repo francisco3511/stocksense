@@ -20,8 +20,8 @@ def main():
         ),
     )
 
-    handler = Etl([])
-    #handler.ingest_all_historical_data()
+    handler = Etl(['AAPL'])
+    handler.ingest_all_historical_data()
     #handler.update_index_listings()
     handler.set_stocks()
     handler.extract()

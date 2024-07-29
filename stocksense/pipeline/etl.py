@@ -11,8 +11,8 @@ from database_handler import DatabaseHandler
 from config import get_config
 from utils import (
     scrape_sp500_stock_info,
+    get_stock_info,
     get_financial_data,
-    get_stock_metadata,
     get_market_data,
     get_stock_insider_data
 )
@@ -56,7 +56,7 @@ class Etl:
             self.stocks = stocks
         else:
             # read main table and return current index members
-            stock_data = self.db_handler.fetch_stock_info()
+            stock_data = self.db_handler.fetch_stock()
             self.stocks = stock_data.filter(
                 pl.col('active') == 1
             )['tic'].to_list()
@@ -70,7 +70,7 @@ class Etl:
         logger.info("updating S&P500 index listings")
 
         # read main stock control table
-        hist_df = self.db_handler.fetch_stock_info()
+        hist_df = self.db_handler.fetch_stock()
 
         # extract active sp500 stocks/sectors
         active_df = scrape_sp500_stock_info()
@@ -82,25 +82,25 @@ class Etl:
 
         # downgrade delisted symbols
         for tic in [t for t in last_constituents if t not in constituents]:
-            self.db_handler.update_stock_data(tic, {"spx_status": 0})
+            self.db_handler.update_stock(tic, {"spx_status": 0})
             logger.info(f"delisted {tic} from S&P500")
 
         # add new symbols
         for tic in [t for t in constituents if t not in last_constituents]:
             # if there were historical records, reflag as constituent
             if tic in hist_constituents:
-                self.db_handler.update_stock_data(
+                self.db_handler.update_stock(
                     tic, {"spx_status": 1, "active": 1}
                 )
             else:
-                stock_info = active_df.filter(pl.col('tic') == tic)
-                stock_info = stock_info.with_columns([
+                stock = active_df.filter(pl.col('tic') == tic)
+                stock = stock.with_columns([
                     pl.lit(dt.datetime.strptime(self.base_date, '%Y-%m-%d').date()).alias('last_update'),
                     pl.lit(1).alias('spx_status'),
                     pl.lit(1).alias('active')
                 ])
-                self.db_handler.insert_stock_info(
-                    stock_info[self.db_fields["stocks"]]
+                self.db_handler.insert_stock(
+                    stock[self.db_fields["stocks"]]
                 )
             logger.info(f"added {tic} to S&P500 index")
 
@@ -159,8 +159,8 @@ class Etl:
         logger.info(f"extracting {tic} stock data")
 
         try:
-            stock_info = self.db_handler.fetch_stock_info(tic).row(0, named=True)
-            last_update = stock_info['last_update']
+            stock = self.db_handler.fetch_stock(tic).row(0, named=True)
+            last_update = stock['last_update']
         except Exception:
             # if stock information is not stored on main table, raise exception
             logger.error(f"no stock {tic} info available.")
@@ -174,9 +174,9 @@ class Etl:
                 logger.info(f"flagged {tic} as inactive")
                 return False
 
-        # extract metadata and update stock status
-        if not self.extract_metadata(tic):
-            # if no metadata found and no data for past yr, flag as inactive
+        # extract stock info and update status
+        if not self.extract_info(tic):
+            # if no info found and no data for past yr, flag as inactive
             if last_update.year < dt.datetime.now().year - 1:
                 self.db_handler.update_stock_data(tic, {'active': 0})
                 logger.info(f"flagged {tic} as inactive")
@@ -187,9 +187,9 @@ class Etl:
         self.extract_insider_data(tic, last_update)
         return True
 
-    def extract_metadata(self, tic: str) -> bool:
+    def extract_info(self, tic: str) -> bool:
         """
-        Extract stock metadata, with relevant current information.
+        Extract stock info, with relevant current information.
 
         Parameters
         ----------
@@ -203,13 +203,13 @@ class Etl:
         """
 
         try:
-            # get stock metadata (adds contextual information about stock)
-            info = get_stock_metadata(tic)
+            # get stock info (adds current ancillary info about stock)
+            info = get_stock_info(tic)
             # update market data on db
-            self.db_handler.insert_metadata(info)
+            self.db_handler.insert_info(info)
             return True
         except Exception:
-            logger.warning(f"metadata extraction FAILED ({tic})")
+            logger.warning(f"info extraction FAILED ({tic})")
             return False
 
     def extract_fundamental_data(self, tic: str, last_update: dt.date) -> bool:
@@ -374,7 +374,7 @@ class Etl:
         """
 
         # read snapshot of S&P500 constituents and store in stocks info table
-        self._ingest_stock_info()
+        self._ingest_stock_list()
 
         # iterate over stock historical and ingest it
         base_folder = self.historical_data_path / 'company_data'
@@ -383,7 +383,7 @@ class Etl:
             if os.path.isdir(stock_path):
                 self._ingest_historical_stock_data(stock_folder, stock_path)
 
-    def _ingest_stock_info(self) -> None:
+    def _ingest_stock_list(self) -> None:
         """
         Ingest historical S&P500 member info.
         """
@@ -403,7 +403,7 @@ class Etl:
             pl.lit(parsed_date).alias('last_update')
         )[self.db_fields["stocks"]]
 
-        self.db_handler.insert_stock_info(index_df)
+        self.db_handler.insert_stock(index_df)
 
     def _ingest_historical_stock_data(
         self,
@@ -453,11 +453,11 @@ class Etl:
             logger.warning(f"financials file not found for {tic}: {e}")
 
         try:
-            metadata_file = stock_path / 'metadata.json'
-            if metadata_file.exists():
-                self._ingest_metadata(metadata_file, tic)
+            info_file = stock_path / 'metadata.json'
+            if info_file.exists():
+                self._ingest_info(info_file, tic)
         except (IndexError, FileNotFoundError) as e:
-            logger.warning(f"metadata file not found for {tic}: {e}")
+            logger.warning(f"stock info not found for {tic}: {e}")
 
     def _ingest_market_data(self, market_file: Path, tic: str) -> None:
         """
@@ -542,14 +542,14 @@ class Etl:
         except Exception:
             logger.warning(f"financials data file for {tic} is empty.")
 
-    def _ingest_metadata(self, metadata_file: Path, tic: str) -> None:
+    def _ingest_info(self, info_file: Path, tic: str) -> None:
         """
-        Ingest stock metadata from JSON file.
+        Ingest stock info from JSON file.
 
         Parameters
         ----------
-        metadata_file : Path
-            Path to stock metadata JSON file.
+        info_file : Path
+            Path to stock info JSON file.
         tic : str
             Target stock ticker.
         """
@@ -561,17 +561,19 @@ class Etl:
                 'rec_key': None,
                 'forward_pe': None
             }
-            # read metadata file and try to load contents
-            f = open(metadata_file)
+            # read info file and try to load contents
+            f = open(info_file)
             data = json.load(f)
-            if 'sharesOutstanding' in data:
-                record['shares_outstanding'] = data['sharesOutstanding']
-            if 'enterpriseValue' in data:
-                record['enterprise_value'] = data['enterpriseValue']
-            if 'recommendationKey' in data:
-                record['rec_key'] = data['recommendationKey']
-            if 'forwardPE' in data:
-                record['forward_pe'] = data['forwardPE']
-            self.db_handler.insert_metadata(record)
+
+            fields = get_config("data")["yahoo_info"]
+
+            record = dict.fromkeys(list(fields.keys()), None)
+            record['tic'] = tic
+
+            for yh_key, key in fields.items():
+                if yh_key in data:
+                    record[key] = data[yh_key]
+
+            self.db_handler.insert_info(record)
         except Exception:
-            logger.warning(f"metadata file for {tic} is empty.")
+            logger.warning(f"info file for {tic} is empty.")

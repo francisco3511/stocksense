@@ -372,9 +372,9 @@ def get_stock_insider_data(ticker: str) -> pl.DataFrame:
     except Exception as e:
         raise e
 
-def get_stock_metadata(ticker: str) -> dict:
+def get_stock_info(ticker: str) -> dict:
     """
-    Retrieve stock metadata.
+    Retrieve stock ancillary information.
 
     Parameters
     ----------
@@ -384,42 +384,34 @@ def get_stock_metadata(ticker: str) -> dict:
     Returns
     -------
     dict
-        Dictionary with target metadata fields.
+        Dictionary with target info fields.
 
     Raises
     ------
     Exception
         When no data was found.
     """
-    # query yahoo finance and get metadata
+    # query yahoo finance and get info
     session = get_session()
     stock = yf.Ticker(ticker, session=session)
-    metadata = stock.info
+    data = stock.info
 
     # set sleeper
     time.sleep(random.uniform(1, MAX_TIMER))
 
     # verify data and format it
-    if not metadata:
+    if not data:
         raise Exception("Empty stock info.")
 
-    record = {
-        'tic': ticker,
-        'shares_outstanding': None,
-        'enterprise_value': None,
-        'rec_key': None,
-        'forward_pe': None
-    }
+    fields = get_config("data")["yahoo_info"]
 
-    # check if retrieved metadata contains db fields
-    if 'sharesOutstanding' in metadata:
-        record['shares_outstanding'] = metadata['sharesOutstanding']
-    if 'enterpriseValue' in metadata:
-        record['enterprise_value'] = metadata['enterpriseValue']
-    if 'recommendationKey' in metadata:
-        record['rec_key'] = metadata['recommendationKey']
-    if 'forwardPE' in metadata:
-        record['forward_pe'] = metadata['forwardPE']
+    record = dict.fromkeys(list(fields.keys()), None)
+    record['tic'] = ticker
+
+    for yh_key, key in fields.items():
+        if yh_key in data:
+            record[key] = data[yh_key]
+    
     return record
 
 def get_exchange_stocks(exc_lis):

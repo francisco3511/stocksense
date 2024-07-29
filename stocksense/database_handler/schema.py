@@ -3,8 +3,8 @@ from loguru import logger
 
 def create_tables(connection: Connection) -> None:
     tables = {
-        'stocks': '''
-            CREATE TABLE IF NOT EXISTS stocks (
+        'stock': '''
+            CREATE TABLE IF NOT EXISTS stock (
                 tic TEXT PRIMARY KEY,
                 name TEXT,
                 sector TEXT,
@@ -13,17 +13,34 @@ def create_tables(connection: Connection) -> None:
                 active INTEGER
             )
         ''',
-        'metadata': '''
-            CREATE TABLE IF NOT EXISTS metadata (
+        'stock_info': '''
+            CREATE TABLE IF NOT EXISTS stock_info (
                 tic TEXT PRIMARY KEY,
+                risk INT,
+                beta REAL,
+                volume REAL,
+                trailing_pe REAL,
+                forward_pe REAL,
+                trailing_peg REAL,
+                peg REAL,
+                trailing_eps REAL,
+                forward_eps REAL,
+                price_book REAL,
+                market_cap REAL,
+                currency TEXT,
                 shares_outstanding REAL,
                 enterprise_value REAL,
+                short_ratio REAL,
+                curr_price REAL,
+                52_week_change REAL,
                 rec_key TEXT,
-                forward_pe REAL
+                target_low REAL,
+                target_high REAL,
+                target_mean REAL
             )
         ''',
-        'financials': '''
-            CREATE TABLE IF NOT EXISTS financials (
+        'financial': '''
+            CREATE TABLE IF NOT EXISTS financial (
                 tic TEXT,
                 datadate TEXT,
                 rdq TEXT NOT NULL,
