@@ -3,7 +3,7 @@ from loguru import logger
 
 def create_tables(connection: Connection) -> None:
     tables = {
-        'stock': '''
+        'stocks': '''
             CREATE TABLE IF NOT EXISTS stock (
                 tic TEXT PRIMARY KEY,
                 name TEXT,
@@ -13,8 +13,8 @@ def create_tables(connection: Connection) -> None:
                 active INTEGER
             )
         ''',
-        'stock_info': '''
-            CREATE TABLE IF NOT EXISTS stock_info (
+        'info': '''
+            CREATE TABLE IF NOT EXISTS info (
                 tic TEXT PRIMARY KEY,
                 risk INT,
                 beta REAL,
@@ -32,7 +32,7 @@ def create_tables(connection: Connection) -> None:
                 enterprise_value REAL,
                 short_ratio REAL,
                 curr_price REAL,
-                52_week_change REAL,
+                fiftytwo_wc REAL,
                 rec_key TEXT,
                 target_low REAL,
                 target_high REAL,

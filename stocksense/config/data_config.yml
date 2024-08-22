@@ -106,7 +106,7 @@
     'enterpriseValue': 'enterprise_value'
     'shortRatio': 'short_ratio'
     'currentPrice': 'curr_price'
-    '52WeekChange': '52_week_change'
+    '52WeekChange': 'fiftytwo_wc'
     'targetLowPrice': 'target_low'
     'targetHighPrice': 'target_high'
     'targetMeanPrice': 'target_mean'
@@ -118,7 +118,7 @@
         - 'last_update'
         - 'spx_status'
         - 'active'
-    'stock_info':
+    'info':
         - 'tic'
         - 'risk'
         - 'beta'
@@ -136,7 +136,7 @@
         - 'enterprise_value'
         - 'short_ratio'
         - 'curr_price'
-        - '52_week_change'
+        - 'fiftytwo_wc'
         - 'rec_key'
         - 'target_low'
         - 'target_high'

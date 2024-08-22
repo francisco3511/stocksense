@@ -36,7 +36,7 @@ class DatabaseHandler:
         insert_data(self.db.get_connection(), "stock", data)
 
     def insert_info(self, record: dict):
-        insert_record(self.db.get_connection(), "stock_info", record)
+        insert_record(self.db.get_connection(), "info", record)
 
     def insert_market_data(self, data: pl.DataFrame):
         data = data.with_columns(data['date'].dt.strftime('%Y-%m-%d').alias('date'))
@@ -79,86 +79,83 @@ class DatabaseHandler:
         tic: Optional[int] = None
     ) -> Union[pl.DataFrame, tuple]:
         
+        # connect to db and fetch data
         conn = self.db.get_connection()
+        df = fetch_data(conn, "stock", {"tic": tic} if tic else None)
         
-        if tic:
-            df = fetch_data(conn, "stock", {"tic": tic})
-        else:
-            df = fetch_data(conn, "stock")
-        
-        df = df.with_columns(
+        if df.is_empty():
+            return df
+
+        return df.with_columns(
             pl.col('last_update').str.to_date(format='%Y-%m-%d')
         )
-        return df
-
+ 
     def fetch_info(
         self,
         tic: Optional[int] = None
     ) -> pl.DataFrame:
         
-        if tic:
-            # fetch info record of a single stock
-            return fetch_record(self.db.get_connection(), "stock_info", {"tic": tic})
-        else:
-            # fetch all stock aux information
-            return fetch_data(self.db.get_connection(), "stock_info")
-
+        # connect to db and fetch data
+        conn = self.db.get_connection()
+                
+        # Fetch record for a single stock or all stocks
+        return (
+            fetch_record(conn, "info", {"tic": tic}) if tic 
+            else fetch_data(conn, "info")
+        )
+    
     def fetch_market_data(
         self,
         tic: Optional[int] = None
     ) -> pl.DataFrame:
         
+        # connect to db and fetch data
         conn = self.db.get_connection()
-        
-        if tic:
-            df = fetch_data(conn, "market", {"tic": tic})
-        else:
-            df = fetch_data(conn, "market")
-        
+        df = fetch_data(conn, "market", {"tic": tic} if tic else None)
+
+        if df.is_empty():
+            return df
+
         # format dates
-        df = df.with_columns(
+        return df.with_columns(
             pl.col('date').str.to_date(format='%Y-%m-%d')
         )
-        
-        return df
 
     def fetch_financial_data(
         self,
         tic: Optional[int] = None
     ) -> pl.DataFrame:
         
-        if tic:
-            df = fetch_data(self.db.get_connection(), "financial", {"tic": tic})
-        else:
-            df = fetch_data(self.db.get_connection(), "financial")
+        # connect to db and fetch data
+        conn = self.db.get_connection()
+        df = fetch_data(conn, "financial", {"tic": tic} if tic else None)
+
+        if df.is_empty():
+            return df
 
         # format dates
-        df = df.with_columns([
+        return df.with_columns([
             pl.col('datadate').str.to_date(format='%Y-%m-%d'),
             pl.col('rdq').str.to_date(format='%Y-%m-%d')
         ])
-        
-        return df
 
     def fetch_insider_data(
         self,
         tic: Optional[int] = None
     ) -> pl.DataFrame:
         
-        if tic:
-            # fetch single stock
-            df = fetch_data(self.db.get_connection(), "insider", {"tic": tic})
-        else:
-            # fetch all insider trading records
-            df = fetch_data(self.db.get_connection(), "insider")
-
+        # connect to db and fetch data
+        conn = self.db.get_connection()
+        df = fetch_data(conn, "insider", {"tic": tic} if tic else None)
+        
+        if df.is_empty():
+            return df
+        
         # format dates
-        df = df.with_columns([
+        return df.with_columns([
             pl.col('trade_date').str.to_date(format='%Y-%m-%d'),
             pl.col('filling_date').str.to_date(format='%Y-%m-%d')
         ])
-
-        return df
 
     def fetch_sp_data(self) -> pl.DataFrame:
         return fetch_data(self.db.get_connection(), "sp500")

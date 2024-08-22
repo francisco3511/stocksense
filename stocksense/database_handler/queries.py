@@ -1,5 +1,4 @@
 import polars as pl
-import sqlite3
 from sqlite3 import Connection, Error
 from loguru import logger
 from typing import Optional

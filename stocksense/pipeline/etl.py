@@ -21,8 +21,8 @@ from utils import (
 class Etl:
     """
     ETL handler class for stock data.
-    Handles data extraction process from each source
-    and ingestion process.
+    Handles remote source data extraction,
+    transformation and DB ingestion processes.
     """
 
     def __init__(self, stocks: list[str | None] = []):
@@ -100,7 +100,7 @@ class Etl:
                     pl.lit(1).alias('active')
                 ])
                 self.db_handler.insert_stock(
-                    stock[self.db_fields["stocks"]]
+                    stock[self.db_fields["stock"]]
                 )
             logger.info(f"added {tic} to S&P500 index")
 
@@ -170,7 +170,7 @@ class Etl:
         if not self.extract_fundamental_data(tic, last_update):
             # if no data found and no data for past 2yrs, flag as inactive
             if last_update.year < dt.datetime.now().year - 2:
-                self.db_handler.update_stock_data(tic, {'active': 0})
+                self.db_handler.update_stock(tic, {'active': 0})
                 logger.info(f"flagged {tic} as inactive")
                 return False
 
@@ -178,7 +178,7 @@ class Etl:
         if not self.extract_info(tic):
             # if no info found and no data for past yr, flag as inactive
             if last_update.year < dt.datetime.now().year - 1:
-                self.db_handler.update_stock_data(tic, {'active': 0})
+                self.db_handler.update_stock(tic, {'active': 0})
                 logger.info(f"flagged {tic} as inactive")
             return False
 
@@ -238,7 +238,7 @@ class Etl:
             start_dt = fin_data['rdq'].max()
         except Exception:
             # no past data available for stock
-            fin_data = pl.DataFrame(schema=self.db_fields["financials"])
+            fin_data = pl.DataFrame(schema=self.db_fields["financial"])
             logger.warning(
                 f'no past financial data found for {tic} ({last_update})'
             )
@@ -264,9 +264,9 @@ class Etl:
 
             # update financial data on db
             self.db_handler.insert_financial_data(
-                data[self.db_fields["financials"]]
+                data[self.db_fields["financial"]]
             )
-            self.db_handler.update_stock_data(tic, {'last_update': end_dt})
+            self.db_handler.update_stock(tic, {'last_update': end_dt})
             logger.info(
                 f'updated financial data for {tic} ({start_dt} : {end_dt})'
             )
@@ -401,7 +401,7 @@ class Etl:
             pl.col("spx_status").cast(pl.Int16),
             pl.col("spx_status").cast(pl.Int16).alias("active"),
             pl.lit(parsed_date).alias('last_update')
-        )[self.db_fields["stocks"]]
+        )[self.db_fields["stock"]]
 
         self.db_handler.insert_stock(index_df)
 
@@ -443,11 +443,11 @@ class Etl:
                 last_update = dt.datetime.strptime(
                     financials_file.stem.split('_')[1], '%Y-%m-%d'
                 ).date()
-                self.db_handler.update_stock_data(
+                self.db_handler.update_stock(
                     tic, {'last_update': last_update}
                 )
                 if last_update.year == dt.datetime.now().date().year:
-                    self.db_handler.update_stock_data(tic, {'active': 1})
+                    self.db_handler.update_stock(tic, {'active': 1})
                 self._ingest_financials_data(financials_file, tic)
         except (IndexError, FileNotFoundError) as e:
             logger.warning(f"financials file not found for {tic}: {e}")
@@ -537,7 +537,7 @@ class Etl:
                 pl.col('rdq').str.to_date("%Y-%m-%d"),
                 pl.lit(tic).alias("tic")
             )
-            financials_df = financials_df[self.db_fields["financials"]]
+            financials_df = financials_df[self.db_fields["financial"]]
             self.db_handler.insert_financial_data(financials_df)
         except Exception:
             logger.warning(f"financials data file for {tic} is empty.")
