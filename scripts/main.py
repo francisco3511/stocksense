@@ -1,10 +1,13 @@
+import click
 import datetime as dt
 from loguru import logger
 
-from pipeline import Etl, Preprocess
+from pipeline import ETL, Preprocess
 
 
-def main():
+@click.command("-u", "--update", is_flag=True, help="Extract data.")
+@click.option("-p", "--preprocess", is_flag=True, help="Preprocess data.")
+def main(update, preprocess):
     """
     Main function
     """
@@ -20,17 +23,17 @@ def main():
         ),
     )
 
-    handler = Etl(['AAPL'])
-    handler.ingest_all_historical_data()
-    #handler.update_index_listings()
-    handler.set_stocks()
-    handler.extract()
-
-    #proc = Preprocess()
-    #proc.process_data()
-
-    #today = dt.datetime.today().date()
-    #proc.save_data(f"proc_data_{today}")
+    if update:
+        # ETL process
+        handler = ETL()
+        # handler.ingest_all_historical_data()
+        handler.extract()
+    if preprocess:
+        # data preprocessing
+        proc = Preprocess()
+        proc.process_data()
+        today = dt.datetime.today().date()
+        proc.save_data(f"proc_data_{today}")
 
     print('done.')
 

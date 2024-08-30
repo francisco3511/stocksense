@@ -1,2 +1,3 @@
-from pipeline.etl import *
-from pipeline.preprocess import *
+from pipeline.etl import ETL
+from pipeline.preprocess import Preprocess
+

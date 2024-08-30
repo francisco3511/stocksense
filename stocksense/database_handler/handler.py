@@ -59,7 +59,7 @@ class DatabaseHandler:
     def insert_index_data(self, data: pl.DataFrame):
         data = data.with_columns(data['date'].dt.strftime('%Y-%m-%d'))
         insert_data(self.db.get_connection(), "sp500", data)
-        
+
     def delete_stock(self, tic: str):
         delete_data(self.db.get_connection(), "stock", {"tic": tic})
 
@@ -78,37 +78,36 @@ class DatabaseHandler:
         self,
         tic: Optional[int] = None
     ) -> Union[pl.DataFrame, tuple]:
-        
+
         # connect to db and fetch data
         conn = self.db.get_connection()
+
         df = fetch_data(conn, "stock", {"tic": tic} if tic else None)
-        
         if df.is_empty():
             return df
-
         return df.with_columns(
             pl.col('last_update').str.to_date(format='%Y-%m-%d')
         )
- 
+
     def fetch_info(
         self,
         tic: Optional[int] = None
     ) -> pl.DataFrame:
-        
+
         # connect to db and fetch data
-        conn = self.db.get_connection()
-                
-        # Fetch record for a single stock or all stocks
+        conn = self.db.get_connection()      
+
+        # fetch record for a single stock or all stocks
         return (
-            fetch_record(conn, "info", {"tic": tic}) if tic 
+            fetch_record(conn, "info", {"tic": tic}) if tic
             else fetch_data(conn, "info")
         )
-    
+
     def fetch_market_data(
         self,
         tic: Optional[int] = None
     ) -> pl.DataFrame:
-        
+
         # connect to db and fetch data
         conn = self.db.get_connection()
         df = fetch_data(conn, "market", {"tic": tic} if tic else None)
@@ -125,7 +124,7 @@ class DatabaseHandler:
         self,
         tic: Optional[int] = None
     ) -> pl.DataFrame:
-        
+
         # connect to db and fetch data
         conn = self.db.get_connection()
         df = fetch_data(conn, "financial", {"tic": tic} if tic else None)
@@ -143,21 +142,21 @@ class DatabaseHandler:
         self,
         tic: Optional[int] = None
     ) -> pl.DataFrame:
-        
+
         # connect to db and fetch data
         conn = self.db.get_connection()
         df = fetch_data(conn, "insider", {"tic": tic} if tic else None)
-        
+
         if df.is_empty():
             return df
-        
+
         # format dates
         return df.with_columns([
             pl.col('trade_date').str.to_date(format='%Y-%m-%d'),
             pl.col('filling_date').str.to_date(format='%Y-%m-%d')
         ])
 
-    def fetch_sp_data(self) -> pl.DataFrame:
+    def fetch_index_data(self) -> pl.DataFrame:
         return fetch_data(self.db.get_connection(), "sp500")
 
     def close(self):
