@@ -18,6 +18,7 @@ dependencies = [
     "requests_cache",
     "requests_ratelimiter",
     "pyrate_limiter",
+    "polars-talib",
     "pygad",
     "xgboost",
     "scikit-learn"
