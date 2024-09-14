@@ -95,7 +95,7 @@ class DatabaseHandler:
     ) -> pl.DataFrame:
 
         # connect to db and fetch data
-        conn = self.db.get_connection()      
+        conn = self.db.get_connection()
 
         # fetch record for a single stock or all stocks
         return (

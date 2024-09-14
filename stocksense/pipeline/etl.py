@@ -142,7 +142,7 @@ class ETL:
 
         # create scraper instance for this stock and extract all
         scraper = Scraper(tic, self.fin_source)
-        if not self.extract_fundamental_data(scraper, last_update):
+        if not self.extract_fundamental_data(tic, scraper, last_update):
             # if no data found and no data for past 2yrs, flag as inactive
             if last_update.year < dt.datetime .now().year - 2:
                 self.db.update_stock(tic, {'active': 0})
@@ -150,7 +150,7 @@ class ETL:
                 return False
 
         # extract stock info and update status
-        if not self.extract_info(scraper):
+        if not self.extract_info(tic, scraper):
             # if no info found and no data for past yr, flag as inactive
             if last_update.year < dt.datetime.now().year - 1:
                 self.db.update_stock(tic, {'active': 0})
@@ -158,8 +158,8 @@ class ETL:
             return False
 
         # extract market data
-        self.extract_market_data(scraper, last_update)
-        self.extract_insider_data(scraper, last_update)
+        self.extract_market_data(tic, scraper, last_update)
+        self.extract_insider_data(tic, scraper, last_update)
         return True
 
     def extract_info(self, tic: str, scraper: Scraper) -> bool:

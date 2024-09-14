@@ -76,7 +76,7 @@ class Scraper:
             pl.col('Volume').alias('volume'),
             pl.lit(self.tic).alias('tic')
         ])
-        df = df.select(['date', 'close', 'adj_close', 'volume'])
+        df = df.select(['date', 'close', 'adj_close', 'volume', 'tic'])
         logger.info(f"scraping took {end - start:.2f} seconds")
         return df
 
@@ -231,7 +231,7 @@ class Scraper:
         """
         if self.source == "yfinance":
             # scrape market data from yfinance
-            return self._get_market_data_yfinance(self, start_date)
+            return self._get_market_data_yfinance(start_date)
         else:
             raise Exception("Other methods not implemented")
 
@@ -244,7 +244,7 @@ class Scraper:
         """
         if self.source == "yfinance":
             # scrape stock current info from yfinance
-            return self._get_stock_info_yfinance(self)
+            return self._get_stock_info_yfinance()
         else:
             raise Exception("Other methods not implemented")
 

@@ -5,7 +5,8 @@ from loguru import logger
 from pipeline import ETL, Preprocess
 
 
-@click.command("-u", "--update", is_flag=True, help="Extract data.")
+@click.command()
+@click.option("-u", "--update", is_flag=True, help="Extract data.")
 @click.option("-p", "--preprocess", is_flag=True, help="Preprocess data.")
 def main(update, preprocess):
     """
@@ -32,8 +33,7 @@ def main(update, preprocess):
         # data preprocessing
         proc = Preprocess()
         proc.process_data()
-        today = dt.datetime.today().date()
-        proc.save_data(f"proc_data_{today}")
+        proc.save_data(f"proc_data_{dt.datetime.today().date()}")
 
     print('done.')
 
