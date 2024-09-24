@@ -165,7 +165,7 @@ class Scraper:
         df = df.select(list(fields_to_keep.keys()))
         df = df.rename(fields_to_keep)
         df = df.filter(
-            (pl.col('datadate') >= start_date) & 
+            (pl.col('datadate') >= start_date) &
             (pl.col('datadate') < end_date)
         )
 

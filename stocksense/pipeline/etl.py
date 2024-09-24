@@ -35,7 +35,7 @@ class ETL:
         """
         logger.info("Setting default S&P500 stock tickers")
         stock_data = self.db.fetch_stock()
-        return stock_data.filter(pl.col('active') == 1)['tic'].to_list()
+        return stock_data.filter(pl.col('spx_status') == 1)['tic'].to_list()
 
     def update_index_listings(self) -> None:
         """Update the S&P500 index constituents in the database."""

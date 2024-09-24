@@ -10,6 +10,8 @@ import polars_talib as plta
 YEARLY_TRADING_DAYS = 252
 QUARTERLY_TRADING_DAYS = 60
 
+# TODO: add logging and exception handling
+
 
 class Preprocess():
     """
@@ -58,7 +60,7 @@ class Preprocess():
             pl.col('rdq').shift().over('tic').alias('prev_rdq')
         ).sort(['tic', 'rdq'])
 
-        df = df.filter(pl.col('tic').is_in(["AMZN", "AAPL"]))
+        #  df = df.filter(pl.col('tic').is_in(["AMZN", "AAPL"]))
 
         # fetch ALL other stock data from source tables
         info = self.db.fetch_stock()
@@ -143,7 +145,6 @@ def adjust_shares(df):
         .fill_null(strategy='backward')
         .alias("adjustment_factor")
     )
-    df = df
 
     # compute cumulative product of adjustment factors in reverse (from latest to earliest)
     df = df.sort(by=["tic", "datadate"]).with_columns([
@@ -165,8 +166,8 @@ def adjust_shares(df):
 
 
 def compute_insider_trading_features(
-        df: pl.DataFrame,
-        insider_df: pl.DataFrame
+    df: pl.DataFrame,
+    insider_df: pl.DataFrame
 ) -> pl.DataFrame:
     """
     Computes insider trading features
@@ -184,23 +185,31 @@ def compute_insider_trading_features(
     pl.DataFrame
         Data with insider trading features.
     """
+    # Convert both dataframes to lazy mode
+    df_lazy = df.lazy()
+    insider_df_lazy = insider_df.lazy()
+
     # filter purchases
-    insider_purchases = insider_df.filter(
+    insider_purchases_lazy = insider_df_lazy.filter(
         pl.col("transaction_type") == "P - Purchase"
     )
-    # cross join and filter
-    df_cross = insider_purchases.join(df, how="cross")
-    df_filtered = df_cross.filter(
+
+    # cross join and filter on the date ranges and ticker matches
+    df_cross_lazy = insider_purchases_lazy.join(df_lazy, how="cross")
+    df_filtered_lazy = df_cross_lazy.filter(
         (pl.col("filling_date") <= pl.col("rdq")) &
         (pl.col("filling_date") >= pl.col("prev_rdq")) &
         (pl.col("tic") == pl.col("tic_right"))
     )
-    # count the number of events for each observation date
-    df_event_counts = df_filtered.group_by(["rdq", "tic"]).agg([
+
+    # count the number of purchases per rdq and tic
+    df_event_counts_lazy = df_filtered_lazy.group_by(["rdq", "tic"]).agg([
         pl.col("filling_date").count().alias("n_purchases")
     ])
-    # join the count result back to the original observations dataframe
-    return df.join(df_event_counts, on=["rdq", "tic"], how="left").fill_null(0)
+
+    # join back to the original dataframe, fill nulls and collect
+    result = df_lazy.join(df_event_counts_lazy, on=["rdq", "tic"], how="left").fill_null(0)
+    return result.collect()
 
 
 def compute_financial_ratios(df: pl.DataFrame) -> pl.DataFrame:
@@ -217,10 +226,9 @@ def compute_financial_ratios(df: pl.DataFrame) -> pl.DataFrame:
     pl.DataFrame
         Data with additional columns.
     """
-    df = df.with_columns([
-        (pl.col('niq').rolling_sum(4).over('tic') / pl.col('atq').rolling_mean(2).over('tic'))
-        .alias('roa'),
-        (pl.col('niq').rolling_sum(4).over('tic') / pl.col('seqq')).alias('roe'),
+    df = df.lazy().with_columns([
+        (pl.col('niq') / pl.col('atq').rolling_mean(2).over('tic')).alias('roa'),
+        (pl.col('niq') / pl.col('seqq')).alias('roe'),
         ((pl.col('saleq') - pl.col('cogsq')) / pl.col('saleq')).alias('gpm'),
         (pl.col('ebitdaq') / pl.col('saleq')).alias('ebitdam'),
         (pl.col('oancfq') / pl.col('saleq')).alias('cfm'),
@@ -235,7 +243,7 @@ def compute_financial_ratios(df: pl.DataFrame) -> pl.DataFrame:
         (pl.col('saleq') / pl.col('invtq').rolling_mean(2).over('tic')).alias('itr'),
         (pl.col('saleq') / pl.col('rectq').rolling_mean(2).over('tic')).alias('rtr'),
         (pl.col('saleq') / pl.col('atq').rolling_mean(2).over('tic')).alias('atr')
-    ])
+    ]).collect()
     return df
 
 
@@ -253,14 +261,14 @@ def compute_growth_ratios(df: pl.DataFrame) -> pl.DataFrame:
     pl.DataFrame
         Data with additional columns.
     """
-    df = df.with_columns([
+    df = df.lazy().with_columns([
         pl.col('niq').pct_change().over('tic').alias('ni_qoq'),
         pl.col('niq').pct_change(4).over('tic').alias('ni_yoy'),
         pl.col('niq').pct_change(8).over('tic').alias('ni_2y'),
         pl.col('saleq').pct_change(4).over('tic').alias('rev_yoy'),
         pl.col('dlttq').pct_change(4).over('tic').alias('ltd_yoy'),
         pl.col('dr').pct_change(4).over('tic').alias('dr_yoy')
-    ])
+    ]).collect()
     return df
 
 

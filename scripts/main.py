@@ -15,7 +15,7 @@ def main(update, preprocess):
 
     logger.remove()
     logger.add(
-        rf"./log/log_{dt.datetime.now().strftime('%Y%m%d')}.log",
+        rf"log/log_{dt.datetime.now().strftime('%Y%m%d')}.log",
         backtrace=False,
         format=(
             "{time:YYYY-MM-DD HH:mm:ss} | "
