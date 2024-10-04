@@ -28,7 +28,12 @@ def insert_record(connection: Connection, table_name: str, record: dict) -> None
         logger.error(f"Error inserting single record into {table_name}: {e}")
 
 
-def update_data(connection: Connection, table_name: str, update_values: dict, condition: dict) -> None:
+def update_data(
+    connection: Connection,
+    table_name: str,
+    update_values: dict,
+    condition: dict
+) -> None:
     try:
         cursor = connection.cursor()
         set_clause = ', '.join([f"{col} = ?" for col in update_values.keys()])
@@ -66,7 +71,11 @@ def count_data(connection: Connection, table_name: str, column: str) -> Optional
         return None
 
 
-def fetch_record(connection: Connection, table_name: str, condition: Optional[dict] = None) -> Optional[pl.DataFrame]:
+def fetch_record(
+    connection: Connection,
+    table_name: str,
+    condition: Optional[dict] = None
+) -> Optional[pl.DataFrame]:
     try:
         cursor = connection.cursor()
         if condition:
@@ -88,7 +97,11 @@ def fetch_record(connection: Connection, table_name: str, condition: Optional[di
         return None
 
 
-def fetch_data(connection: Connection, table_name: str, condition: Optional[dict] = None) -> Optional[pl.DataFrame]:
+def fetch_data(
+    connection: Connection,
+    table_name: str,
+    condition: Optional[dict] = None
+) -> Optional[pl.DataFrame]:
     try:
         cursor = connection.cursor()
         if condition:

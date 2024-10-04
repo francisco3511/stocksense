@@ -1,6 +1,7 @@
 from sqlite3 import Connection, Error
 from loguru import logger
 
+
 def create_tables(connection: Connection) -> None:
     tables = {
         'stocks': '''
@@ -51,7 +52,7 @@ def create_tables(connection: Connection) -> None:
                 ebitdaq REAL,
                 cshoq REAL,
                 actq REAL,
-                atq REAL, 
+                atq REAL,
                 cheq REAL,
                 rectq REAL,
                 invtq REAL,

@@ -3,6 +3,7 @@ from sqlite3 import Error
 from pathlib import Path
 from loguru import logger
 
+
 class DatabaseConnection:
     def __init__(self, db_path: Path):
         self.db_path = db_path

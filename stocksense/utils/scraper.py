@@ -94,7 +94,7 @@ class Scraper:
         if not data:
             raise Exception("Empty stock info.")
 
-        fields = get_config("data")["yahoo_info"]
+        fields = get_config("scraping")["yahoo_info"]
         record = dict.fromkeys(list(fields.values()), None)
         record['tic'] = self.tic
 
@@ -122,7 +122,7 @@ class Scraper:
         start = time.time()
 
         # fields to preserve
-        fields_to_keep = get_config("data")["yahoo"]
+        fields_to_keep = get_config("scraping")["yahoo"]
 
         # retrieve 3 main documents
         is_df = pl.from_pandas(self.handler.quarterly_income_stmt.T.reset_index())
