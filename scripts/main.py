@@ -6,11 +6,12 @@ from pipeline import ETL, Preprocess
 
 
 @click.command()
-@click.option("-u", "--update", is_flag=True, help="Extract data.")
-@click.option("-p", "--preprocess", is_flag=True, help="Preprocess data.")
-def main(update, preprocess):
+@click.option("-u", "--update", is_flag=True, help="Update stock data.")
+@click.option("-p", "--preprocess", is_flag=True, help="Preprocess stock data.")
+@click.option("-t", "--train", is_flag=True, help="Train model.")
+def main(update, preprocess, train):
     """
-    Main function
+    CLI handling.
     """
 
     logger.remove()
@@ -27,14 +28,14 @@ def main(update, preprocess):
     if update:
         # ETL process
         handler = ETL()
-        # handler.ingest_all_historical_data()
         handler.extract()
     if preprocess:
         # data preprocessing
         proc = Preprocess()
-        proc.process_data()
-        proc.save_data(f"proc_data_{dt.datetime.today().date()}")
-
+        proc.run()
+        proc.save_data()
+    if train:
+        pass
     print('done.')
 
 

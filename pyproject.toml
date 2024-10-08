@@ -21,7 +21,9 @@ dependencies = [
     "polars-talib",
     "pygad",
     "xgboost",
-    "scikit-learn"
+    "scikit-learn",
+    "plotly",
+    "nbformat>=4.2.0"
 ]
 
 readme = "README.md"
@@ -36,3 +38,4 @@ where = ["stocksense"]
 
 [project.scripts]
 run-app = "stocksense.app:main"
+run = "scripts.main:main"

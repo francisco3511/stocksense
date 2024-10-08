@@ -20,7 +20,6 @@
     - 'roa_yoy'
     - 'roe_qoq'
     - 'roe_yoy'
-    - 'fcf_qoq'
     - 'fcf_yoy'
     - 'cr_qoq'
     - 'cr_yoy'
@@ -35,7 +34,12 @@
     - 'pe_yoy'
     - 'ev_eb_qoq'
     - 'ev_eb_yoy'
+    - 'ltcr_yoy'
+    - 'itr_yoy'
+    - 'rtr_yoy'
+    - 'atr_yoy'
 'targets':
     - 'freturn'
     - 'adj_freturn'
     - 'adj_fperf'
+'seed': 123

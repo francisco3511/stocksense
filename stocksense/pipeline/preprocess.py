@@ -11,12 +11,12 @@ YEARLY_TRADING_DAYS = 252
 QUARTERLY_TRADING_DAYS = 60
 MONTHLY_TRADING_DAYS = 21
 
-# TODO: add logging and exception handling
+# TODO: add logging and exception handling, optimize insider feat comp
 
 
 class Preprocess():
     """
-    Data preprocessing handling class.
+    Stock data processing pipeline handler.
     """
 
     def __init__(self):
@@ -26,17 +26,15 @@ class Preprocess():
         self.index_data = None
         self.data = None
 
-    def process_data(self):
+    def run(self):
         """
-        Computes financial features for all stocks with
-        financial observations recorded on the database.
+        Runs main data processing pipeline.
         """
-        # compute index features
-        self.index_data = self.process_index_data()
-        # compute all features
-        self.data = self.feature_engineering()
+        self.index_data = self._process_index_data()
+        self.data = self._feature_engineering()
+        self.data = self._clean_data()
 
-    def process_index_data(self) -> pl.DataFrame:
+    def _process_index_data(self) -> pl.DataFrame:
         """
         Process S&P500 index price data.
 
@@ -60,14 +58,14 @@ class Preprocess():
         )
         return index_df
 
-    def feature_engineering(self) -> pl.DataFrame:
+    def _feature_engineering(self) -> pl.DataFrame:
         """
         Compute financial ratios and features for training.
         """
         # get financial data
         df = self.db.fetch_financial_data()
 
-        df = df.filter(pl.col('tic').is_in(['AAPL']))
+        # df = df.sort(by=['tic', 'datadate']).filter(pl.col('tic').is_in(['AAPL', 'AMZN', 'COST']))
 
         # fetch ALL other stock data from source tables
         info = self.db.fetch_stock()
@@ -96,15 +94,27 @@ class Preprocess():
         # add id info and select relevant features
         df = df.join(info.select(['tic', 'sector']), on='tic', how='left')
 
-        df = df.select(
+        return df.select(
             ['datadate', 'rdq', 'tdq', 'tic', 'sector'] +
             self.features +
             self.targets
         )
+
+    def _clean_data(self):
+        """
+        Apply training dataset cleaning and processing transformations.
+        """
+
+        df = self.data.clone()
         return df
 
-    def save_data(self, name: str) -> None:
-        self.data.write_csv(f"data/2_production_data/{name}.csv")
+    def save_data(self) -> None:
+        """
+        Saves processed data locally.
+        """
+        today = dt.datetime.today().date()
+        file_name = f"data/1_work_data/processed_data/proc_data_{today}.csv"
+        self.data.write_csv(file_name)
 
 
 def generate_quarter_dates(start_year: int, end_year: int) -> pl.DataFrame:
@@ -140,14 +150,14 @@ def compute_trade_date(df: pl.DataFrame) -> pl.DataFrame:
     }).with_columns(pl.col('tdq').dt.date())
 
     # join where each date is matched with the next available quarter-end
+    df = df.sort(by=['rdq', 'tic'])
     df = df.join_asof(
         quarter_df,
         left_on='rdq',
         right_on='tdq',
         strategy='forward'
     )
-
-    return df
+    return df.sort(by=['tic', 'rdq'])
 
 
 def map_to_closest_split_factor(approx_factor: float) -> float:
@@ -201,7 +211,7 @@ def adjust_shares(df: pl.DataFrame) -> pl.DataFrame:
     )
 
     # compute cumulative product of adjustment factors in reverse (from latest to earliest)
-    df = df.sort(by=["tic", "datadate"]).with_columns([
+    df = df.sort(by=['tic', 'datadate']).with_columns([
         pl.col('adjustment_factor')
         .cum_prod(reverse=True)
         .over('tic')
@@ -215,7 +225,7 @@ def adjust_shares(df: pl.DataFrame) -> pl.DataFrame:
     )
 
     # sort back to original order
-    df = df.sort(by=['tic', 'datadate'])
+    df = df.sort(by=['tic', 'tdq'])
     return df.drop(['csho_ratio', 'split_factor', 'adjustment_factor', 'cum_adjustment_factor'])
 
 
@@ -224,44 +234,31 @@ def compute_insider_purchases(
     insider_df: pl.DataFrame
 ) -> pl.DataFrame:
     """
-    Computes insider buying quarterly features,
-    using SEC-4 fillings table.
-
-    Parameters
-    ----------
-    df : pl.DataFrame
-        Financial data of a given stock.
-    insider_df : pl.DataFrame
-        Global insider trading data.
-
-    Returns
-    -------
-    pl.DataFrame
-        Data with insider trading features.
+    Optimized version of computing insider buying quarterly features.
     """
-    # Convert both dataframes to lazy mode
+
+    # Filter relevant purchases first (before cross join)
+    insider_filtered_lazy = insider_df.lazy().filter(
+        (pl.col('transaction_type') == "P - Purchase")
+    )
+
+    # Perform the join in one step, and groupby for both counts and sums together
     df_lazy = df.lazy()
-    insider_df_lazy = insider_df.lazy()
 
-    # filter purchases
-    insider_purchases_lazy = insider_df_lazy.filter(
-        pl.col('transaction_type') == "P - Purchase"
-    )
-
-    # cross join and filter on the date ranges and ticker matches
-    df_cross_lazy = insider_purchases_lazy.join(df_lazy, how='cross')
-    df_filtered_lazy = df_cross_lazy.filter(
+    # Join on matching tickers, and filter by date
+    df_filtered_lazy = df_lazy.join(
+        insider_filtered_lazy,
+        how='inner',  # inner join on ticker first
+        left_on=['tic'],
+        right_on=['tic']
+    ).filter(
         (pl.col('filling_date') < pl.col('tdq')) &
-        (pl.col('filling_date') >= pl.col('tdq').dt.offset_by('-3mo')) &
-        (pl.col('tic') == pl.col('tic_right'))
+        (pl.col('filling_date') >= pl.col('tdq').dt.offset_by('-3mo'))
     )
 
-    # count the number and qty of purchases per trade period and firm
-    df_event_counts = df_filtered_lazy.group_by(['tic', 'tdq']).agg([
-        pl.col('filling_date').count().alias('n_purch')
-    ])
-
-    df_qty = df_filtered_lazy.group_by(['tic', 'tdq']).agg([
+    # Aggregate both n_purch and val_purch in a single groupby to avoid double join
+    df_agg_lazy = df_filtered_lazy.group_by(['tic', 'tdq']).agg([
+        pl.col('filling_date').count().alias('n_purch'),
         (
             pl.col('value')
             .str.replace_all(r"[\$,€]", "")
@@ -270,9 +267,9 @@ def compute_insider_purchases(
         ).sum().round(3).alias('val_purch')
     ])
 
-    # join back to the original dataframe, fill nulls and collect
-    result = df_lazy.join(df_event_counts, on=['tic', 'tdq'], how='left').fill_null(0)
-    result = result.join(df_qty, on=['tic', 'tdq'], how='left').fill_null(0)
+    # Left join back to the original dataframe, fill nulls
+    result = df_lazy.join(df_agg_lazy, on=['tic', 'tdq'], how='left').fill_null(0)
+
     return result.collect()
 
 
@@ -281,56 +278,43 @@ def compute_insider_sales(
     insider_df: pl.DataFrame
 ) -> pl.DataFrame:
     """
-    Computes insider selling quarterly features,
-    using SEC-4 fillings table.
-
-    Parameters
-    ----------
-    df : pl.DataFrame
-        Financial data of a given stock.
-    insider_df : pl.DataFrame
-        Global insider trading data.
-
-    Returns
-    -------
-    pl.DataFrame
-        Data with insider trading features.
+    Optimized version of computing insider buying quarterly features.
     """
-    # Convert both dataframes to lazy mode
-    df_lazy = df.lazy()
-    insider_df_lazy = insider_df.lazy()
 
-    # filter purchases
-    insider_sales_lazy = insider_df_lazy.filter(
+    # Filter relevant purchases first (before cross join)
+    insider_filtered_lazy = insider_df.lazy().filter(
         (pl.col('transaction_type') == "S - Sale") |
         (pl.col('transaction_type') == "S - Sale+OE")
     )
 
-    # cross join and filter on the date ranges and ticker matches
-    df_cross_lazy = insider_sales_lazy.join(df_lazy, how='cross')
-    df_filtered_lazy = df_cross_lazy.filter(
+    # Perform the join in one step, and groupby for both counts and sums together
+    df_lazy = df.lazy()
+
+    # Join on matching tickers, and filter by date
+    df_filtered_lazy = df_lazy.join(
+        insider_filtered_lazy,
+        how='inner',  # inner join on ticker first
+        left_on=['tic'],
+        right_on=['tic']
+    ).filter(
         (pl.col('filling_date') < pl.col('tdq')) &
-        (pl.col('filling_date') >= pl.col('tdq').dt.offset_by('-3mo')) &
-        (pl.col('tic') == pl.col('tic_right'))
+        (pl.col('filling_date') >= pl.col('tdq').dt.offset_by('-3mo'))
     )
 
-    # count the number and qty of purchases per trade period and firm
-    df_event_counts = df_filtered_lazy.group_by(['tic', 'tdq']).agg([
-        pl.col('filling_date').count().alias('n_sales')
-    ])
-
-    df_qty = df_filtered_lazy.group_by(['tic', 'tdq']).agg([
+    # Aggregate both n_purch and val_purch in a single groupby to avoid double join
+    df_agg_lazy = df_filtered_lazy.group_by(['tic', 'tdq']).agg([
+        pl.col('filling_date').count().alias('n_sales'),
         (
             - pl.col('value')
             .str.replace_all(r"[\$,€]", "")
             .str.replace_all(",", "")
             .cast(pl.Float64) / 1000000
-        ).round(3).sum().alias('val_sales')
+        ).sum().round(3).alias('val_sales')
     ])
 
-    # join back to the original dataframe, fill nulls and collect
-    result = df_lazy.join(df_event_counts, on=['tdq', 'tic'], how='left').fill_null(0)
-    result = result.join(df_qty, on=['tdq', 'tic'], how='left').fill_null(0)
+    # Left join back to the original dataframe, fill nulls
+    result = df_lazy.join(df_agg_lazy, on=['tic', 'tdq'], how='left').fill_null(0)
+
     return result.collect()
 
 
@@ -349,8 +333,8 @@ def compute_financial_ratios(df: pl.DataFrame) -> pl.DataFrame:
         Data with additional columns.
     """
     df = df.lazy().with_columns([
-        (pl.col('niq') / pl.col('atq').rolling_mean(2).over('tic')).alias('roa'),
-        (pl.col('niq') / pl.col('seqq')).alias('roe'),
+        (pl.col('niq').rolling_sum(4) / pl.col('atq').rolling_mean(2).over('tic')).alias('roa'),
+        (pl.col('niq').rolling_sum(4) / pl.col('seqq')).alias('roe'),
         ((pl.col('saleq') - pl.col('cogsq')) / pl.col('saleq')).alias('gpm'),
         (pl.col('ebitdaq') / pl.col('saleq')).alias('ebitdam'),
         (pl.col('oancfq') / pl.col('saleq')).alias('cfm'),
@@ -392,7 +376,7 @@ def compute_market_ratios(
     pl.DataFrame
         Main dataset with added ratios.
     """
-
+    # compute momentum and market return features
     market_df = market_df.with_columns([
         pl.col('adj_close').pct_change(-YEARLY_TRADING_DAYS).over('tic').alias('freturn'),
         plta.rsi(pl.col('close'), timeperiod=14).over('tic').alias('rsi_14d'),
@@ -401,8 +385,12 @@ def compute_market_ratios(
         pl.col('close').pct_change(YEARLY_TRADING_DAYS).over('tic').alias('price_yoy'),
         pl.col('close').pct_change(QUARTERLY_TRADING_DAYS).over('tic').alias('price_qoq'),
         (pl.col('close').log() - pl.col('close').shift(1).log()).alias('log_return')
+    ]).with_columns([
+        pl.col('log_return').rolling_std(MONTHLY_TRADING_DAYS).alias('vol_m'),
+        pl.col('log_return').rolling_std(QUARTERLY_TRADING_DAYS).alias('vol_q'),
     ])
 
+    # join market data
     df = df.join_asof(
         market_df.drop(['volume']),
         left_on='tdq',
@@ -411,18 +399,20 @@ def compute_market_ratios(
         strategy='backward',
         tolerance=dt.timedelta(days=7)
     )
+
+    # join sp500 data
+    df = df.sort(by=['tdq', 'tic'])
     df = df.join_asof(
         index_df.select(['date', 'adj_close', 'index_freturn', 'index_qoq', 'index_yoy']),
         left_on='tdq',
         right_on='date',
-        by='date',
         strategy='backward',
         tolerance=dt.timedelta(days=7)
     )
+    df = df.sort(by=['tic', 'tdq'])
 
+    # compute market + fin features
     df = df.with_columns([
-        pl.col('log_return').rolling_std(MONTHLY_TRADING_DAYS).alias('vol_m'),
-        pl.col('log_return').rolling_std(QUARTERLY_TRADING_DAYS).alias('vol_q'),
         (pl.col('freturn') - pl.col('index_freturn')).alias('adj_freturn'),
         (pl.col('price_qoq') / pl.col('index_qoq')).alias('momentum_qoq'),
         (pl.col('price_yoy') / pl.col('index_yoy')).alias('momentum_yoy'),
@@ -446,7 +436,7 @@ def compute_growth_ratios(df: pl.DataFrame) -> pl.DataFrame:
     Parameters
     ----------
     df : pl.DataFrame
-        Financial data of a given stock.
+        Financial data for a given stock.
 
     Returns
     -------
@@ -479,6 +469,10 @@ def compute_growth_ratios(df: pl.DataFrame) -> pl.DataFrame:
         pl.col('pe').pct_change(1).over('tic').alias('pe_qoq'),
         pl.col('pe').pct_change(4).over('tic').alias('pe_yoy'),
         pl.col('ev_ebitda').pct_change(1).over('tic').alias('ev_eb_qoq'),
-        pl.col('ev_ebitda').pct_change(4).over('tic').alias('ev_eb_yoy')
+        pl.col('ev_ebitda').pct_change(4).over('tic').alias('ev_eb_yoy'),
+        pl.col('ltcr').pct_change(4).over('tic').alias('ltcr_yoy'),
+        pl.col('itr').pct_change(4).over('tic').alias('itr_yoy'),
+        pl.col('rtr').pct_change(4).over('tic').alias('rtr_yoy'),
+        pl.col('atr').pct_change(4).over('tic').alias('atr_yoy')
     ]).collect()
     return df
