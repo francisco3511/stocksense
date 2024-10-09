@@ -107,7 +107,7 @@ def fitness_function_wrapper(data, date_col, start_date, train_window, val_windo
         model = XGBoostModel(params)
 
         # Walk-forward evaluation loop
-        precisions = []
+        perfs = []
         for train, val, _ in walk_forward_val_split(data, start_date, train_window, val_window):
             X_train = train.select(pl.exclude(date_col)).to_pandas()  # Convert Polars to pandas
             y_train = train.select("target").to_pandas().values.ravel()
@@ -118,11 +118,11 @@ def fitness_function_wrapper(data, date_col, start_date, train_window, val_windo
             model.train(X_train, y_train)
 
             # Evaluate precision on validation set
-            precision = model.evaluate(X_val, y_val)["prec"]
-            precisions.append(precision)
+            perf = model.evaluate(X_val, y_val)["prec"]
+            perfs.append(perf)
 
         # Average precision across all splits
-        avg_precision = sum(precisions) / len(precisions)
+        avg_precision = sum(perfs) / len(perfs)
         return avg_precision
 
     return fitness_function

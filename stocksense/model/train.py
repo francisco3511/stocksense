@@ -67,3 +67,7 @@ def train():
     # Train GA to optimize hyperparameters
     ga.create_instance()
     ga.train()
+    best_solution, best_solution_fitness, _ = ga.best_solution()
+
+    model = XGBoostModel(best_solution)
+    #  model.train(X_train, y_train)

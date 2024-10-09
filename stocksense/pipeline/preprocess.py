@@ -52,7 +52,10 @@ class Preprocess():
         )
         # compute index forward returns
         index_df = index_df.with_columns(
-            pl.col('adj_close').pct_change(-YEARLY_TRADING_DAYS).alias('index_freturn'),
+            (
+                pl.col('adj_close').shift(-YEARLY_TRADING_DAYS) /
+                pl.col('adj_close') - 1
+            ).alias('index_freturn'),
             pl.col('adj_close').pct_change(QUARTERLY_TRADING_DAYS).alias('index_qoq'),
             pl.col('adj_close').pct_change(YEARLY_TRADING_DAYS).alias('index_yoy')
         )
@@ -64,8 +67,6 @@ class Preprocess():
         """
         # get financial data
         df = self.db.fetch_financial_data()
-
-        # df = df.sort(by=['tic', 'datadate']).filter(pl.col('tic').is_in(['AAPL', 'AMZN', 'COST']))
 
         # fetch ALL other stock data from source tables
         info = self.db.fetch_stock()
@@ -106,6 +107,19 @@ class Preprocess():
         """
 
         df = self.data.clone()
+
+        growth_alias = ["qoq", "yoy", "2y", "return"]
+        growth_vars = [f for f in df.columns if any(xf in f for xf in growth_alias)]
+
+        # remove nans
+        df = df.filter(~pl.all_horizontal(pl.col("ni_2y").is_null()))
+
+        for feature in [f for f in df.columns if any(xf in f for xf in growth_vars)]:
+            # winsorize
+            df = df.with_columns(
+                df.with_columns(pl.col(feature).clip(-500, 500))
+            )
+
         return df
 
     def save_data(self) -> None:
@@ -378,7 +392,10 @@ def compute_market_ratios(
     """
     # compute momentum and market return features
     market_df = market_df.with_columns([
-        pl.col('adj_close').pct_change(-YEARLY_TRADING_DAYS).over('tic').alias('freturn'),
+        (
+            pl.col('adj_close').shift(-YEARLY_TRADING_DAYS) /
+            pl.col('adj_close') - 1
+        ).over('tic').alias('freturn'),
         plta.rsi(pl.col('close'), timeperiod=14).over('tic').alias('rsi_14d'),
         plta.rsi(pl.col('close'), timeperiod=30).over('tic').alias('rsi_30d'),
         plta.rsi(pl.col('close'), timeperiod=60).over('tic').alias('rsi_60d'),
