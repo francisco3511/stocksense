@@ -378,7 +378,7 @@ class Scraper:
         resp = requests.get('http://en.wikipedia.org/wiki/List_of_S%26P_500_companies')
         end = time.time()
         soup = bs(resp.text, 'lxml')
-        table = soup.find('table', {'class': 'wikitable sortable'})
+        table = soup.find('table', id='constituents')
 
         data = {"tic": [], "name": [], "sector": []}
 

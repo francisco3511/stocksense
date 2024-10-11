@@ -1,5 +1,7 @@
 import pygad
 import polars as pl
+import datetime as dt
+from loguru import logger
 
 from model import XGBoostModel
 from config import get_config
@@ -14,7 +16,8 @@ class GeneticAlgorithm:
         num_genes,
         fitness_func,
         init_range_low,
-        init_range_high
+        init_range_high,
+        keep_elitism
     ):
         self.num_generations = num_generations
         self.num_parents_mating = num_parents_mating
@@ -23,6 +26,8 @@ class GeneticAlgorithm:
         self.fitness_func = fitness_func
         self.init_range_low = init_range_low
         self.init_range_high = init_range_high
+        self.keep_elitism = keep_elitism
+        self.random_seed = get_config("model")["seed"]
         self.ga_instance = None
 
     def create_instance(self):
@@ -34,8 +39,24 @@ class GeneticAlgorithm:
             num_genes=self.num_genes,
             init_range_low=self.init_range_low,
             init_range_high=self.init_range_high,
-            mutation_percent_genes=10,
-            mutation_type="random"
+            keep_elitism=self.keep_elitism,
+            mutation_percent_genes=20,
+            mutation_type="random",
+            parent_selection_type="tournament",
+            on_generation=self.adaptive_mutation_callback
+        )
+
+    def adaptive_mutation_callback(self, ga_instance):
+        # adaptive mutation - decrease the mutation rate as the generations increase
+        current_generation = ga_instance.generations_completed
+        max_generations = ga_instance.num_generations
+
+        # reduce the mutation rate linearly from 10% to 1%
+        mutation_decay = 10 - (9 * (current_generation / max_generations))
+        ga_instance.mutation_percent_genes = max(1, mutation_decay)
+
+        logger.info(
+            f" {current_generation}: Mutation rate set to {ga_instance.mutation_percent_genes}%"
         )
 
     def train(self):
@@ -60,31 +81,27 @@ class GeneticAlgorithm:
         self.ga_instance.plot_fitness()
 
 
-def walk_forward_val_split(data, start_date, train_window, val_window, test_window):
+def walk_forward_val_split(data, start_year, train_window, val_window):
     """
     Split the dataset into walk-forward training, validation, and test sets.
     """
-    current_date = start_date
-    while True:
+    current_year = start_year
+    while current_year + train_window + val_window < dt.datetime.now().year:
         train = data.filter(
-            pl.col('tdq').is_between(
-                current_date,
-                current_date + train_window
-            )
+            (pl.col('tdq').dt.year() >= current_year) &
+            (pl.col('tdq').dt.year() < current_year + train_window)
         )
         val = data.filter(
-            pl.col('tdq').is_between(
-                current_date + train_window,
-                current_date + train_window + val_window
-            )
+            (pl.col('tdq').dt.year() >= current_year + train_window) &
+            (pl.col('tdq').dt.year() < current_year + train_window + val_window)
         )
         yield train, val
-        current_date += test_window
+        current_year += 1
 
 
-def fitness_function_wrapper(data, date_col, start_date, train_window, val_window, test_window):
-    def fitness_function(solution, _):
-        # Hyperparameters from GA solution
+def fitness_function_wrapper(data, date_col, target_col, start_year, train_window, val_window):
+    def fitness_function(ga_instance, solution, solution_idx):
+        # hyperparameters from GA solution
         params = {
             'objective': 'binary:logistic',
             'learning_rate': solution[0],
@@ -103,26 +120,31 @@ def fitness_function_wrapper(data, date_col, start_date, train_window, val_windo
             'seed': get_config('model')['seed']
         }
 
-        # Initialize XGBoost model with GA solution parameters
+        # init XGBoost model with GA solution parameters
         model = XGBoostModel(params)
 
-        # Walk-forward evaluation loop
+        # walk-forward evaluation loop
         perfs = []
-        for train, val, _ in walk_forward_val_split(data, start_date, train_window, val_window):
-            X_train = train.select(pl.exclude(date_col)).to_pandas()  # Convert Polars to pandas
-            y_train = train.select("target").to_pandas().values.ravel()
+        for train, val in walk_forward_val_split(
+            data,
+            start_year,
+            train_window,
+            val_window
+        ):
+            X_train = train.select(pl.exclude(date_col)).to_pandas()
+            y_train = train.select(target_col).to_pandas().values.ravel()
             X_val = val.select(pl.exclude(date_col)).to_pandas()
-            y_val = val.select("target").to_pandas().values.ravel()
+            y_val = val.select(target_col).to_pandas().values.ravel()
 
-            # Train on training set
+            # train on training set
             model.train(X_train, y_train)
 
-            # Evaluate precision on validation set
-            perf = model.evaluate(X_val, y_val)["prec"]
+            # evaluate performance on validation set
+            perf = model.evaluate(X_val, y_val)["pr_auc"]
             perfs.append(perf)
 
-        # Average precision across all splits
-        avg_precision = sum(perfs) / len(perfs)
-        return avg_precision
+        # average performance across all splits
+        avg_perf = sum(perfs) / len(perfs)
+        return avg_perf, solution_idx, ga_instance
 
     return fitness_function

@@ -30,24 +30,24 @@ class XGBoostModel:
         eval_set = [(X_train, y_train)]
         if X_val is not None and y_val is not None:
             eval_set.append((X_val, y_val))
-        
+
         self.model = xgb.XGBClassifier(**self.params)
         self.model.fit(X_train, y_train, eval_set=eval_set, verbose=True)
-        
+
     def predict(self, X):
         if self.model is None:
             raise Exception("Model is not trained yet. Train the model before predicting.")
         return self.model.predict(X)
-    
+
     def predict_proba(self, X):
         if self.model is None:
             raise Exception("Model is not trained yet. Train the model before predicting.")
         return self.model.predict_proba(X)
-    
+
     def evaluate(self, X_test, y_test):
         y_pred = self.predict(X_test)
         y_proba = self.predict_proba(X_test)
-  
+
         eval = {
             'acc': skm.accuracy_score(y_test, y_pred),
             'prec': skm.precision_score(y_test, y_pred),
@@ -58,15 +58,15 @@ class XGBoostModel:
             'brier': skm.brier_score_loss(y_test, y_proba),
             'pr_auc': skm.average_precision_score(y_test, y_proba),
         }
-        
+
         return eval
-    
+
     def save_model(self, name):
         if self.model is None:
             raise Exception("Model is not trained yet. Train the model before saving.")
         with open(self.model_path / f"{name}.pkl", 'wb') as f:
             pickle.dump(self.model, f)
-    
+
     def load_model(self, name):
         with open(self.model_path / f"{name}.pkl", 'rb') as f:
             self.model = pickle.load(f)

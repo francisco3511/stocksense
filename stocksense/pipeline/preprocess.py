@@ -114,10 +114,25 @@ class Preprocess():
         # remove nans
         df = df.filter(~pl.all_horizontal(pl.col("ni_2y").is_null()))
 
+        # filter relevant sectors
+        df = df.filter(pl.col('sector').is_in([
+            'Health Care',
+            'Financials',
+            'Industrials',
+            'Consumer Discretionary',
+            'Information Technology',
+            'Communication Services',
+            'Consumer Staples',
+            'Utilities',
+            'Real Estate',
+            'Materials',
+            'Energy'
+        ]))
+
         for feature in [f for f in df.columns if any(xf in f for xf in growth_vars)]:
-            # winsorize
+            # clip growth rates
             df = df.with_columns(
-                df.with_columns(pl.col(feature).clip(-500, 500))
+                df.with_columns(pl.col(feature).clip(-20, 20))
             )
 
         return df
@@ -127,7 +142,7 @@ class Preprocess():
         Saves processed data locally.
         """
         today = dt.datetime.today().date()
-        file_name = f"data/1_work_data/processed_data/proc_data_{today}.csv"
+        file_name = f"data/1_work_data/processed/proc_{today}.csv"
         self.data.write_csv(file_name)
 
 
@@ -461,35 +476,65 @@ def compute_growth_ratios(df: pl.DataFrame) -> pl.DataFrame:
         Data with additional columns.
     """
     df = df.lazy().with_columns([
-        pl.col('niq').pct_change(1).over('tic').alias('ni_qoq'),
-        pl.col('niq').pct_change(4).over('tic').alias('ni_yoy'),
-        pl.col('niq').pct_change(8).over('tic').alias('ni_2y'),
-        pl.col('saleq').pct_change(1).over('tic').alias('rev_qoq'),
-        pl.col('saleq').pct_change(4).over('tic').alias('rev_yoy'),
-        pl.col('gpm').pct_change(1).over('tic').alias('gpm_qoq'),
-        pl.col('gpm').pct_change(4).over('tic').alias('gpm_yoy'),
-        pl.col('roa').pct_change(1).over('tic').alias('roa_qoq'),
-        pl.col('roa').pct_change(4).over('tic').alias('roa_yoy'),
-        pl.col('roe').pct_change(1).over('tic').alias('roe_qoq'),
-        pl.col('roe').pct_change(4).over('tic').alias('roe_yoy'),
-        pl.col('fcf').pct_change(1).over('tic').alias('fcf_qoq'),
-        pl.col('fcf').pct_change(4).over('tic').alias('fcf_yoy'),
-        pl.col('cr').pct_change(1).over('tic').alias('cr_qoq'),
-        pl.col('cr').pct_change(4).over('tic').alias('cr_yoy'),
-        pl.col('qr').pct_change(1).over('tic').alias('qr_qoq'),
-        pl.col('qr').pct_change(4).over('tic').alias('qr_yoy'),
-        pl.col('der').pct_change(1).over('tic').alias('der_qoq'),
-        pl.col('der').pct_change(4).over('tic').alias('der_yoy'),
-        pl.col('dr').pct_change(1).over('tic').alias('dr_qoq'),
-        pl.col('dr').pct_change(4).over('tic').alias('dr_yoy'),
-        pl.col('ltda').pct_change(4).over('tic').alias('ltda_yoy'),
-        pl.col('pe').pct_change(1).over('tic').alias('pe_qoq'),
-        pl.col('pe').pct_change(4).over('tic').alias('pe_yoy'),
-        pl.col('ev_ebitda').pct_change(1).over('tic').alias('ev_eb_qoq'),
-        pl.col('ev_ebitda').pct_change(4).over('tic').alias('ev_eb_yoy'),
-        pl.col('ltcr').pct_change(4).over('tic').alias('ltcr_yoy'),
-        pl.col('itr').pct_change(4).over('tic').alias('itr_yoy'),
-        pl.col('rtr').pct_change(4).over('tic').alias('rtr_yoy'),
-        pl.col('atr').pct_change(4).over('tic').alias('atr_yoy')
+        ((pl.col('niq') - pl.col('niq').shift(1)) / pl.col('niq').shift(1).abs()).over('tic')
+        .alias('ni_qoq'),
+        ((pl.col('niq') - pl.col('niq').shift(4)) / pl.col('niq').shift(4).abs()).over('tic')
+        .alias('ni_yoy'),
+        ((pl.col('niq') - pl.col('niq').shift(8)) / pl.col('niq').shift(8).abs()).over('tic')
+        .alias('ni_2y'),
+        ((pl.col('saleq') - pl.col('saleq').shift(1)) / pl.col('saleq').shift(1).abs()).over('tic')
+        .alias('rev_qoq'),
+        ((pl.col('saleq') - pl.col('saleq').shift(4)) / pl.col('saleq').shift(4).abs()).over('tic')
+        .alias('rev_yoy'),
+        ((pl.col('gpm') - pl.col('gpm').shift(1)) / pl.col('gpm').shift(1).abs()).over('tic')
+        .alias('gpm_qoq'),
+        ((pl.col('gpm') - pl.col('gpm').shift(4)) / pl.col('gpm').shift(4).abs()).over('tic')
+        .alias('gpm_yoy'),
+        ((pl.col('roa') - pl.col('roa').shift(1)) / pl.col('roa').shift(1).abs()).over('tic')
+        .alias('roa_qoq'),
+        ((pl.col('roa') - pl.col('roa').shift(4)) / pl.col('roa').shift(4).abs()).over('tic')
+        .alias('roa_yoy'),
+        ((pl.col('roe') - pl.col('roe').shift(1)) / pl.col('roe').shift(1).abs()).over('tic')
+        .alias('roe_qoq'),
+        ((pl.col('roe') - pl.col('roe').shift(4)) / pl.col('roe').shift(4).abs()).over('tic')
+        .alias('roe_yoy'),
+        ((pl.col('fcf') - pl.col('fcf').shift(1)) / pl.col('fcf').shift(1).abs()).over('tic')
+        .alias('fcf_qoq'),
+        ((pl.col('fcf') - pl.col('fcf').shift(4)) / pl.col('fcf').shift(4).abs()).over('tic')
+        .alias('fcf_yoy'),
+        ((pl.col('cr') - pl.col('cr').shift(1)) / pl.col('cr').shift(1).abs()).over('tic')
+        .alias('cr_qoq'),
+        ((pl.col('cr') - pl.col('cr').shift(4)) / pl.col('cr').shift(4).abs()).over('tic')
+        .alias('cr_yoy'),
+        ((pl.col('qr') - pl.col('qr').shift(1)) / pl.col('qr').shift(1).abs()).over('tic')
+        .alias('qr_qoq'),
+        ((pl.col('qr') - pl.col('qr').shift(4)) / pl.col('qr').shift(4).abs()).over('tic')
+        .alias('qr_yoy'),
+        ((pl.col('der') - pl.col('der').shift(1)) / pl.col('der').shift(1).abs()).over('tic')
+        .alias('der_qoq'),
+        ((pl.col('der') - pl.col('der').shift(4)) / pl.col('der').shift(4).abs()).over('tic')
+        .alias('der_yoy'),
+        ((pl.col('dr') - pl.col('dr').shift(1)) / pl.col('dr').shift(1).abs()).over('tic')
+        .alias('dr_qoq'),
+        ((pl.col('dr') - pl.col('dr').shift(4)) / pl.col('dr').shift(4).abs()).over('tic')
+        .alias('dr_yoy'),
+        ((pl.col('ltda') - pl.col('ltda').shift(4)) / pl.col('ltda').shift(4).abs()).over('tic')
+        .alias('ltda_yoy'),
+        ((pl.col('pe') - pl.col('pe').shift(1)) / pl.col('pe').shift(1).abs()).over('tic')
+        .alias('pe_qoq'),
+        ((pl.col('pe') - pl.col('pe').shift(4)) / pl.col('pe').shift(4).abs()).over('tic')
+        .alias('pe_yoy'),
+        ((pl.col('ev_ebitda') - pl.col('ev_ebitda').shift(1)) / pl.col('ev_ebitda').shift(1).abs())
+        .over('tic').alias('ev_eb_qoq'),
+        ((pl.col('ev_ebitda') - pl.col('ev_ebitda').shift(4)) / pl.col('ev_ebitda').shift(4).abs())
+        .over('tic').alias('ev_eb_yoy'),
+        ((pl.col('ltcr') - pl.col('ltcr').shift(4)) / pl.col('ltcr').shift(4).abs())
+        .over('tic').alias('ltcr_yoy'),
+        ((pl.col('itr') - pl.col('itr').shift(4)) / pl.col('itr').shift(4).abs())
+        .over('tic').alias('itr_yoy'),
+        ((pl.col('rtr') - pl.col('rtr').shift(4)) / pl.col('rtr').shift(4).abs())
+        .over('tic').alias('rtr_yoy'),
+        ((pl.col('atr') - pl.col('atr').shift(4)) / pl.col('atr').shift(4).abs())
+        .over('tic').alias('atr_yoy')
     ]).collect()
     return df

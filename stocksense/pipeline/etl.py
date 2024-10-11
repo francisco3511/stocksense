@@ -31,14 +31,19 @@ class ETL:
         """
         Retrieve default S&P500 stock tickers if none are provided.
 
-        :return list[str]: List of stocks tickers for ETL process.
+        Returns
+        -------
+        list[str]
+            List of stocks tickers for ETL process.
         """
-        logger.info("Setting default S&P500 stock tickers")
+        logger.info("setting default S&P500 stock tickers")
         stock_data = self.db.fetch_stock()
         return stock_data.filter(pl.col('spx_status') == 1)['tic'].to_list()
 
     def update_index_listings(self) -> None:
-        """Update the S&P500 index constituents in the database."""
+        """
+        Update the S&P500 index constituents in the database.
+        """
 
         logger.info("updating S&P500 index listings")
 
@@ -80,8 +85,12 @@ class ETL:
             if tic in hist_constituents:
                 self.db.update_stock(tic, {"spx_status": 1, "active": 1})
             else:
+                parsed_date = dt.datetime.strptime(
+                    self.base_date,
+                    '%Y-%m-%d'
+                ).date()
                 stock = active_df.filter(pl.col('tic') == tic).with_columns([
-                    pl.lit(self.base_date).alias('last_update'),
+                    pl.lit(parsed_date).alias('last_update'),
                     pl.lit(1).alias('spx_status'),
                     pl.lit(1).alias('active')
                 ])
@@ -115,7 +124,9 @@ class ETL:
         return
 
     def _extract_all_stocks(self) -> None:
-        """Extract data for all assigned stocks."""
+        """
+        Extract data for all assigned stocks.
+        """
         pl_bar = tqdm(total=len(self.stocks), desc='Stock', leave=True)
         for tic in self.stocks:
             self._extract_stock_data(tic)
@@ -228,7 +239,7 @@ class ETL:
             logger.info(f'{tic}: updated financial data ({start_dt}:{end_dt})')
             return True
         except Exception:
-            logger.error(f"{tic}: financial data extraction ({self.fin_source}) FAILED")
+            logger.error(f"{tic}: no new financial data found ({self.fin_source})")
             return False
 
     def extract_market_data(self, tic: str, scraper: Scraper, last_update: dt.date) -> bool:
