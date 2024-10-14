@@ -3,7 +3,7 @@ import datetime as dt
 from loguru import logger
 
 from pipeline import ETL, Preprocess
-from model import train
+from model import ModelHandler
 
 
 @click.command()
@@ -38,9 +38,9 @@ def main(update, preprocess, train_model):
         proc.save_data()
     if train_model:
         # train model
-        train()
-
-    print('done.')
+        model_handler = ModelHandler()
+        model_handler.train()
+        model_handler.score()
 
 
 if __name__ == "__main__":

@@ -1,6 +1,7 @@
 import polars as pl
 import numpy as np
 import datetime as dt
+from loguru import logger
 
 from config import get_config
 from database_handler import DatabaseHandler
@@ -30,6 +31,7 @@ class Preprocess():
         """
         Runs main data processing pipeline.
         """
+        logger.info("START processing stock data")
         self.index_data = self._process_index_data()
         self.data = self._feature_engineering()
         self.data = self._clean_data()
@@ -43,8 +45,11 @@ class Preprocess():
         pl.DataFrame
             Processed data, incl. forward and past return rates.
         """
+        logger.info("START processing S&P500 index data")
+
         # load index data
         index_df = self.db.fetch_index_data()
+        index_df = index_df.sort(by=['date'])
 
         # parse date
         index_df = index_df.with_columns(
@@ -59,12 +64,15 @@ class Preprocess():
             pl.col('adj_close').pct_change(QUARTERLY_TRADING_DAYS).alias('index_qoq'),
             pl.col('adj_close').pct_change(YEARLY_TRADING_DAYS).alias('index_yoy')
         )
+        logger.success(f"S&P500 index data {index_df.shape[0]} rows PROCESSED")
         return index_df
 
     def _feature_engineering(self) -> pl.DataFrame:
         """
         Compute financial ratios and features for training.
         """
+        logger.info("START feature engineering")
+
         # get financial data
         df = self.db.fetch_financial_data()
 
@@ -95,11 +103,15 @@ class Preprocess():
         # add id info and select relevant features
         df = df.join(info.select(['tic', 'sector']), on='tic', how='left')
 
-        return df.select(
+        df = df.select(
             ['datadate', 'rdq', 'tdq', 'tic', 'sector'] +
             self.features +
             self.targets
+        ).filter(
+            pl.col('tdq') <= pl.lit(dt.datetime.today().date())
         )
+        logger.success(f"{df.shape[1]} features PROCESSED")
+        return df
 
     def _clean_data(self):
         """

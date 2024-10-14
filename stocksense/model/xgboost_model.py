@@ -1,7 +1,8 @@
 import xgboost as xgb
 import pickle
-from pathlib import Path
 import sklearn.metrics as skm
+
+from config import get_config
 
 
 class XGBoostModel:
@@ -21,18 +22,13 @@ class XGBoostModel:
             'use_label_encoder': False,
             'eval_metric': 'logloss',
             'nthread': 2,
-            'seed': 123
+            'seed': get_config('model')['seed']
         }
-        self.model_path = Path('./models')
         self.model = None
 
-    def train(self, X_train, y_train, X_val=None, y_val=None):
-        eval_set = [(X_train, y_train)]
-        if X_val is not None and y_val is not None:
-            eval_set.append((X_val, y_val))
-
+    def train(self, X_train, y_train):
         self.model = xgb.XGBClassifier(**self.params)
-        self.model.fit(X_train, y_train, eval_set=eval_set, verbose=True)
+        self.model.fit(X_train, y_train, verbose=True)
 
     def predict(self, X):
         if self.model is None:
@@ -46,7 +42,7 @@ class XGBoostModel:
 
     def evaluate(self, X_test, y_test):
         y_pred = self.predict(X_test)
-        y_proba = self.predict_proba(X_test)
+        y_proba = self.predict_proba(X_test)[:, 1]
 
         eval = {
             'acc': skm.accuracy_score(y_test, y_pred),
@@ -61,12 +57,12 @@ class XGBoostModel:
 
         return eval
 
-    def save_model(self, name):
+    def save_model(self, model_path):
         if self.model is None:
-            raise Exception("Model is not trained yet. Train the model before saving.")
-        with open(self.model_path / f"{name}.pkl", 'wb') as f:
-            pickle.dump(self.model, f)
+            raise Exception("model is not trained yet, train the model before saving.")
+        with open(model_path, 'wb') as f:
+            pickle.dump((self.model, self.params), f)
 
-    def load_model(self, name):
-        with open(self.model_path / f"{name}.pkl", 'rb') as f:
-            self.model = pickle.load(f)
+    def load_model(self, model_path):
+        with open(model_path, 'rb') as f:
+            self.model, self.params = pickle.load(f)

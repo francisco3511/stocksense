@@ -63,6 +63,9 @@ class DatabaseHandler:
     def delete_stock(self, tic: str):
         delete_data(self.db.get_connection(), "stock", {"tic": tic})
 
+    def delete_financials(self, tic: str):
+        delete_data(self.db.get_connection(), "financial", {"tic": tic})
+
     def update_stock(self, tic: str, update_values: dict):
         update_data(
             self.db.get_connection(),

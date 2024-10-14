@@ -17,6 +17,7 @@ class GeneticAlgorithm:
         fitness_func,
         init_range_low,
         init_range_high,
+        gene_space,
         keep_elitism
     ):
         self.num_generations = num_generations
@@ -26,11 +27,13 @@ class GeneticAlgorithm:
         self.fitness_func = fitness_func
         self.init_range_low = init_range_low
         self.init_range_high = init_range_high
+        self.gene_space = gene_space
         self.keep_elitism = keep_elitism
-        self.random_seed = get_config("model")["seed"]
+        self.random_seed = get_config('model')['seed']
         self.ga_instance = None
 
     def create_instance(self):
+        logger.info("creating GA instance")
         self.ga_instance = pygad.GA(
             num_generations=self.num_generations,
             num_parents_mating=self.num_parents_mating,
@@ -40,24 +43,22 @@ class GeneticAlgorithm:
             init_range_low=self.init_range_low,
             init_range_high=self.init_range_high,
             keep_elitism=self.keep_elitism,
-            mutation_percent_genes=20,
+            gene_space=self.gene_space,
+            mutation_percent_genes=10,
             mutation_type="random",
             parent_selection_type="tournament",
-            on_generation=self.adaptive_mutation_callback
+            on_generation=self.log_generation
         )
 
-    def adaptive_mutation_callback(self, ga_instance):
-        # adaptive mutation - decrease the mutation rate as the generations increase
-        current_generation = ga_instance.generations_completed
-        max_generations = ga_instance.num_generations
-
-        # reduce the mutation rate linearly from 10% to 1%
-        mutation_decay = 10 - (9 * (current_generation / max_generations))
-        ga_instance.mutation_percent_genes = max(1, mutation_decay)
-
-        logger.info(
-            f" {current_generation}: Mutation rate set to {ga_instance.mutation_percent_genes}%"
-        )
+    def log_generation(self, ga_instance):
+        """
+        Callback function that logs information after each generation.
+        """
+        # Log the best solution and fitness for the current generation
+        best_solution, best_solution_fitness, best_solution_idx = ga_instance.best_solution()
+        logger.info(f"generation {ga_instance.generations_completed}:")
+        logger.info(f"  best solution: {best_solution}")
+        logger.info(f"  best fitness: {best_solution_fitness}")
 
     def train(self):
         if self.ga_instance is None:
@@ -131,20 +132,22 @@ def fitness_function_wrapper(data, date_col, target_col, start_year, train_windo
             train_window,
             val_window
         ):
-            X_train = train.select(pl.exclude(date_col)).to_pandas()
+
+            # split data
+            X_train = train.select(pl.exclude([target_col, date_col])).to_pandas()
             y_train = train.select(target_col).to_pandas().values.ravel()
-            X_val = val.select(pl.exclude(date_col)).to_pandas()
+            X_val = val.select(pl.exclude([target_col, date_col])).to_pandas()
             y_val = val.select(target_col).to_pandas().values.ravel()
 
             # train on training set
             model.train(X_train, y_train)
 
             # evaluate performance on validation set
-            perf = model.evaluate(X_val, y_val)["pr_auc"]
+            perf = model.evaluate(X_val, y_val)['pr_auc']
             perfs.append(perf)
 
         # average performance across all splits
         avg_perf = sum(perfs) / len(perfs)
-        return avg_perf, solution_idx, ga_instance
+        return avg_perf
 
     return fitness_function

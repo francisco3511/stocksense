@@ -145,13 +145,13 @@ class Scraper:
         df = is_df.join_asof(
             bs_df,
             on='index',
-            strategy='forward',
-            tolerance=dt.timedelta(days=40)
+            strategy='backward',
+            tolerance=dt.timedelta(days=30)
         ).join_asof(
             cf_df,
             on='index',
-            strategy='forward',
-            tolerance=dt.timedelta(days=40)
+            strategy='backward',
+            tolerance=dt.timedelta(days=30)
         )
 
         # validate columns and create placeholders
@@ -282,11 +282,15 @@ class Scraper:
             tolerance=dt.timedelta(days=80)
         )
 
-        # in cases where data is found but no release dt, defer to today
-        today = dt.datetime.now().date()
-        df = df.with_columns(pl.when(
-            pl.col('rdq').is_null()
-            ).then(today).otherwise(pl.col('rdq')).alias('rdq')
+        # in cases where data is found but no release dt, defer to 2.5 months
+        df = df.with_columns(
+            pl.when(
+                pl.col('rdq').is_null()
+            ).then(
+                pl.col('datadate') + pl.duration(days=80)
+            ).otherwise(
+                pl.col('rdq')
+            ).alias('rdq')
         )
         return df
 

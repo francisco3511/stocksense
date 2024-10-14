@@ -60,22 +60,31 @@ class ETL:
         """
         Downgrade delisted symbols from S&P500.
 
-        :param pl.DataFrame stock_df: stock control table.
-        :param pl.DataFrame active_df: current sp500 stocks and sectors.
+        Parameters
+        ----------
+        stock_df : pl.DataFrame
+            stock control table.
+        active_df : pl.DataFrame
+            current sp500 stocks and sectors.
         """
+
         last_constituents = stock_df.filter(pl.col('spx_status') == 1)['tic'].to_list()
         constituents = active_df['tic'].to_list()
 
         for tic in [t for t in last_constituents if t not in constituents]:
             self.db.update_stock(tic, {"spx_status": 0})
-            logger.info(f"Delisted {tic} from S&P500")
+            logger.info(f"{tic}: delisted from S&P500")
 
     def _add_new_symbols(self, stock_df: pl.DataFrame, active_df: pl.DataFrame) -> None:
         """
         Adds new symbols to S&P500.
 
-        :param pl.DataFrame stock_df: stock control table.
-        :param pl.DataFrame active_df: current sp500 stocks and sectors.
+        Parameters
+        ----------
+        stock_df : pl.DataFrame
+            stock control table.
+        active_df : pl.DataFrame
+            current sp500 stocks and sectors.
         """
         hist_constituents = stock_df['tic'].to_list()
         last_constituents = stock_df.filter(pl.col('spx_status') == 1)['tic'].to_list()
@@ -98,19 +107,25 @@ class ETL:
             logger.info(f"added {tic} to S&P500 index")
 
     def is_empty(self):
-        """Check if no stocks were assigned to ETL process."""
+        """
+        Check if no stocks were assigned to ETL process.
+        """
         return not self.stocks
 
     def extract(self) -> None:
-        """Extract all stock data from pre-defined data sources."""
+        """
+        Extract all stock data from pre-defined data sources.
+        """
         logger.info("START stock data extraction process")
         if self.is_empty():
-            raise ValueError("No stocks assigned for ETL process.")
+            raise ValueError("no stocks assigned for ETL process.")
         self.extract_sp_500()
         self._extract_all_stocks()
 
     def extract_sp_500(self) -> None:
-        """Retrieve updated S&P500 data."""
+        """
+        Retrieve updated S&P500 data.
+        """
         logger.info("extracting S&P500 data")
         try:
             # scrape index data and save to db
@@ -138,8 +153,15 @@ class ETL:
         Extract updated data for a single stock, including
         market, financial and insider trading data.
 
-        :param str tic: Ticker of stock to update.
-        :return bool: Sucess status
+        Parameters
+        ----------
+        tic : str
+            ticker of stock to update.
+
+        Returns
+        -------
+        bool
+            sucess status
         """
         logger.opt(ansi=True).info(f"<red>START {tic}</red> stock data extraction")
 
@@ -177,11 +199,18 @@ class ETL:
         """
         Extract stock info, with relevant current information.
 
-        :param str tic: Target stock ticker.
-        :param Scraper scraper:  Stock data scraping handler object.
-        :return bool: Success status.
-        """
+        Parameters
+        ----------
+        tic : str
+            Target stock ticker.
+        scraper : Scraper
+            Stock data scraping handler object.
 
+        Returns
+        -------
+        bool
+            Success status.
+        """
         try:
             # get stock info
             info = scraper.get_stock_info()
@@ -198,11 +227,19 @@ class ETL:
         Extract financial statement data and update database
         financials table.
 
-        :param str tic: Target stock ticker.
-        :param Scraper scraper: Stock data scraping handler object.
-        :param dt.date last_update: Date of last data update.
-        :raises Exception: Data extraction failed.
-        :return bool: Success.
+        Parameters
+        ----------
+        tic : str
+            Target stock ticker.
+        scraper : Scraper
+            Stock data scraping handler object.
+        last_update : dt.date
+            Date of last data update.
+
+        Returns
+        -------
+        bool
+            Success status.
         """
 
         try:
@@ -221,7 +258,7 @@ class ETL:
         end_dt = dt.datetime.now().date()
 
         # check if earnings season is possible
-        if (end_dt - start_dt) < dt.timedelta(days=60):
+        if (end_dt - start_dt) < dt.timedelta(days=30):
             logger.warning(f'{tic}: earnings season not reached ({last_update})')
             return False
         try:
@@ -247,10 +284,19 @@ class ETL:
         Extract daily market data, including adjusted close, close
         and volume.
 
-        :param str tic: Target stock ticker.
-        :param Scraper scraper: Stock data scraping handler object.
-        :param dt.date last_update: Date of last data update.
-        :return bool: Success status.
+        Parameters
+        ----------
+        tic : str
+            Target stock ticker.
+        scraper : Scraper
+            Stock data scraping handler object.
+        last_update : dt.date
+            Date of last data update.
+
+        Returns
+        -------
+        bool
+            Success status.
         """
 
         # set end date to present
@@ -282,10 +328,19 @@ class ETL:
         """
         Extract insider trading data.
 
-        :param str tic: Target stock ticker.
-        :param Scraper scraper: Stock data scraping handler object.
-        :param dt.date last_update: Date of last data update.
-        :return bool: Success status.
+        Parameters
+        ----------
+        tic : str
+            Target stock ticker.
+        scraper : Scraper
+            Stock data scraping handler object.
+        last_update : dt.date
+            Date of last data update.
+
+        Returns
+        -------
+        bool
+            Success status.
         """
 
         # set end date to present
@@ -314,7 +369,9 @@ class ETL:
             return False
 
     def ingest_all_historical_data(self):
-        """Ingest historical stock data stored in .csv files."""
+        """
+        Ingest historical stock data stored in .csv files.
+        """
 
         # read snapshot of S&P500 constituents and store in stocks info table
         self._ingest_stock_list()
@@ -327,7 +384,9 @@ class ETL:
                 self._ingest_historical_stock_data(stock_folder, stock_path)
 
     def _ingest_stock_list(self) -> None:
-        """Ingest historical S&P500 member info."""
+        """
+        Ingest historical S&P500 member info.
+        """
 
         index_df = pl.read_csv(
             self.historical_data_path / 'SP500.csv',
