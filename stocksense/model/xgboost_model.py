@@ -6,7 +6,7 @@ from config import get_config
 
 
 class XGBoostModel:
-    def __init__(self, params=None):
+    def __init__(self, params=None, scale=1):
         self.params = params if params else {
             'objective': 'binary:logistic',
             'learning_rate': 0.1,
@@ -18,7 +18,7 @@ class XGBoostModel:
             'colsample_bytree': 1,
             'reg_alpha': 0,
             'reg_lambda': 1,
-            'scale_pos_weight': 1,
+            'scale_pos_weight': scale,
             'use_label_encoder': False,
             'eval_metric': 'logloss',
             'nthread': 2,
@@ -56,6 +56,10 @@ class XGBoostModel:
         }
 
         return eval
+
+    def get_importance(self, importance_type='gain'):
+        importance = self.model.get_booster().get_score(importance_type=importance_type)
+        return sorted(importance.items(), key=lambda x: x[1], reverse=True)
 
     def save_model(self, model_path):
         if self.model is None:

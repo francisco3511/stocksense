@@ -39,7 +39,7 @@ def main(update, preprocess, train_model):
     if train_model:
         # train model
         model_handler = ModelHandler()
-        model_handler.train()
+        model_handler.train_simple()
         model_handler.score()
 
 

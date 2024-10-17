@@ -19,10 +19,57 @@ class ModelHandler:
         self.status = True
         self.train_start = 2007
         self.date_col = 'tdq'
-        self.target_col = 'adj_fperf'
+        self.target_col = 'fperf'
         self.val_train_window = 12
         self.val_eval_window = 2
         self.last_trade_date = None
+
+    def train_simple(self):
+        """
+        Train sector-specific models.
+        """
+
+        logger.info("START training stocksense models")
+
+        # load training data
+        data = load_processed_data()
+
+        # find last trade date
+        self.last_trade_date = find_last_trading_date()
+
+        # set training period with quarter gap
+        data = data.filter(
+            (pl.col('tdq') < self.last_trade_date)
+        )
+        data = data.filter(~pl.all_horizontal(pl.col(self.target_col).is_null()))
+
+        data = data.to_dummies(columns=['sector'])
+
+        # filter cols
+        aux_cols = ['datadate', 'rdq', 'sector', 'freturn', 'adj_freturn']
+        data = data.select([c for c in data.columns if c not in aux_cols])
+
+        train = data.filter(
+            (pl.col('tdq').dt.year() >= 2007) &
+            (pl.col('tdq').dt.year() < 2020)
+        )
+        val = data.filter(
+            (pl.col('tdq').dt.year() >= 2020) &
+            (pl.col('tdq').dt.year() < 2023)
+        )
+        scale = int(
+            len(train.filter(pl.col(self.target_col) == 0)) /
+            len(train.filter(pl.col(self.target_col) == 1))
+        )
+
+        X_train = train.select(pl.exclude(['tic', self.target_col, self.date_col])).to_pandas()
+        y_train = train.select(self.target_col).to_pandas().values.ravel()
+        X_val = val.select(pl.exclude(['tic', self.target_col, self.date_col])).to_pandas()
+        y_val = val.select(self.target_col).to_pandas().values.ravel()
+
+        model = XGBoostModel(scale=7)
+        model.train(X_train, y_train)
+        perf = model.evaluate(X_val, y_val)['pr_auc']
 
     def train(self):
         """
@@ -53,7 +100,7 @@ class ModelHandler:
             train_df = train_df.filter(~pl.all_horizontal(pl.col(self.target_col).is_null()))
 
             # filter cols
-            aux_cols = ['datadate', 'rdq', 'tic', 'sector', 'freturn', 'adj_freturn']
+            aux_cols = ['datadate', 'rdq', 'sector', 'freturn', 'adj_freturn']
             train_df = train_df.select([c for c in train_df.columns if c not in aux_cols])
 
             # create GA instance

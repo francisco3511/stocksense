@@ -47,7 +47,7 @@ class GeneticAlgorithm:
             mutation_percent_genes=10,
             mutation_type="random",
             parent_selection_type="tournament",
-            on_generation=self.log_generation
+            on_generation=self.log_generation,
         )
 
     def log_generation(self, ga_instance):
@@ -86,18 +86,19 @@ def walk_forward_val_split(data, start_year, train_window, val_window):
     """
     Split the dataset into walk-forward training, validation, and test sets.
     """
-    current_year = start_year
-    while current_year + train_window + val_window < dt.datetime.now().year:
+    train_start = start_year
+    val_start = train_start + train_window + 1
+    while val_start + val_window < dt.datetime.now().year:
         train = data.filter(
-            (pl.col('tdq').dt.year() >= current_year) &
-            (pl.col('tdq').dt.year() < current_year + train_window)
+            (pl.col('tdq').dt.year() >= train_start) &
+            (pl.col('tdq').dt.year() < train_start + train_window)
         )
         val = data.filter(
-            (pl.col('tdq').dt.year() >= current_year + train_window) &
-            (pl.col('tdq').dt.year() < current_year + train_window + val_window)
+            (pl.col('tdq').dt.year() >= val_start) &
+            (pl.col('tdq').dt.year() < val_start + val_window)
         )
         yield train, val
-        current_year += 1
+        train_start += 1
 
 
 def fitness_function_wrapper(data, date_col, target_col, start_year, train_window, val_window):
@@ -134,9 +135,9 @@ def fitness_function_wrapper(data, date_col, target_col, start_year, train_windo
         ):
 
             # split data
-            X_train = train.select(pl.exclude([target_col, date_col])).to_pandas()
+            X_train = train.select(pl.exclude(['tic', target_col, date_col])).to_pandas()
             y_train = train.select(target_col).to_pandas().values.ravel()
-            X_val = val.select(pl.exclude([target_col, date_col])).to_pandas()
+            X_val = val.select(pl.exclude(['tic', target_col, date_col])).to_pandas()
             y_val = val.select(target_col).to_pandas().values.ravel()
 
             # train on training set
@@ -148,6 +149,7 @@ def fitness_function_wrapper(data, date_col, target_col, start_year, train_windo
 
         # average performance across all splits
         avg_perf = sum(perfs) / len(perfs)
+        print(avg_perf)
         return avg_perf
 
     return fitness_function
