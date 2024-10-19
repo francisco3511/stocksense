@@ -5,6 +5,7 @@ from pathlib import Path
 from loguru import logger
 
 from model import XGBoostModel, GeneticAlgorithm, fitness_function_wrapper
+from config import get_config
 
 
 warnings.filterwarnings("ignore")
@@ -18,15 +19,16 @@ class ModelHandler:
     def __init__(self):
         self.status = True
         self.train_start = 2007
+        self.tic_col = 'tic'
         self.date_col = 'tdq'
         self.target_col = 'fperf'
-        self.val_train_window = 12
-        self.val_eval_window = 2
+        self.train_window = 12
+        self.val_window = 2
         self.last_trade_date = None
 
-    def train_simple(self):
+    def train(self):
         """
-        Train sector-specific models.
+        Train and optimize models.
         """
 
         logger.info("START training stocksense models")
@@ -37,154 +39,123 @@ class ModelHandler:
         # find last trade date
         self.last_trade_date = find_last_trading_date()
 
-        # set training period with quarter gap
-        data = data.filter(
-            (pl.col('tdq') < self.last_trade_date)
-        )
-        data = data.filter(~pl.all_horizontal(pl.col(self.target_col).is_null()))
+        # log run
+        logger.info(f"START training model {self.last_trade_date}")
 
-        data = data.to_dummies(columns=['sector'])
+        # set up model folder
+        model_path = Path("models/")
+        model_path.mkdir(parents=True, exist_ok=True)
+
+        # set training period
+        train_df = data.filter((pl.col('tdq') < self.last_trade_date))
+        train_df = train_df.filter(~pl.all_horizontal(pl.col(self.target_col).is_null()))
+
+        # get imbalance scale approx
+        scale = int(
+            len(train_df.filter(
+                (pl.col(self.target_col) == 0) &
+                (pl.col('tdq').dt.year() >= self.train_start) &
+                (pl.col('tdq').dt.year() < self.train_start + self.train_window)
+            )) /
+            len(train_df.filter(
+                (pl.col(self.target_col) == 1) &
+                (pl.col('tdq').dt.year() >= self.train_start) &
+                (pl.col('tdq').dt.year() < self.train_start + self.train_window)
+            ))
+        )
 
         # filter cols
-        aux_cols = ['datadate', 'rdq', 'sector', 'freturn', 'adj_freturn']
-        data = data.select([c for c in data.columns if c not in aux_cols])
-
-        train = data.filter(
-            (pl.col('tdq').dt.year() >= 2007) &
-            (pl.col('tdq').dt.year() < 2020)
+        aux_cols = (
+            ['datadate', 'rdq', 'sector'] +
+            [t for t in get_config('model')['targets'] if t != self.target_col]
         )
-        val = data.filter(
-            (pl.col('tdq').dt.year() >= 2020) &
-            (pl.col('tdq').dt.year() < 2023)
-        )
-        scale = int(
-            len(train.filter(pl.col(self.target_col) == 0)) /
-            len(train.filter(pl.col(self.target_col) == 1))
+        train_df = train_df.select([c for c in train_df.columns if c not in aux_cols])
+
+        # create GA instance
+        ga = GeneticAlgorithm(
+            num_generations=50,
+            num_parents_mating=10,
+            sol_per_pop=50,
+            num_genes=9,
+            fitness_func=fitness_function_wrapper(
+                train_df,
+                self.tic_col,
+                self.date_col,
+                self.target_col,
+                self.train_start,
+                self.train_window,
+                self.val_window,
+                scale
+            ),
+            init_range_low=[0.01, 50, 3, 1, 0, 0.5, 0.5, 0, 1],
+            init_range_high=[0.3, 500, 10, 10, 5, 1, 1, 10, 10],
+            gene_space=[
+                {'low': 0.01, 'high': 0.3},
+                {'low': 50, 'high': 500},
+                {'low': 3, 'high': 10},
+                {'low': 1, 'high': 10},
+                {'low': 0, 'high': 5},
+                {'low': 0.5, 'high': 1},
+                {'low': 0.5, 'high': 1},
+                {'low': 0, 'high': 10},
+                {'low': 1, 'high': 10}
+            ]
         )
 
-        X_train = train.select(pl.exclude(['tic', self.target_col, self.date_col])).to_pandas()
-        y_train = train.select(self.target_col).to_pandas().values.ravel()
-        X_val = val.select(pl.exclude(['tic', self.target_col, self.date_col])).to_pandas()
-        y_val = val.select(self.target_col).to_pandas().values.ravel()
+        # train GA to optimize hyperparameters
+        ga.create_instance()
+        ga.train()
+        best_solution, best_solution_fitness, best_solution_idx = ga.best_solution()
 
-        model = XGBoostModel(scale=7)
+        # set final training fold
+        X_train = train_df.select(
+            pl.exclude([self.tic_col, self.target_col, self.date_col])
+        ).to_pandas()
+        y_train = train_df.select(self.target_col).to_pandas().values.ravel()
+
+        # train xgboost
+        model = XGBoostModel(best_solution, scale=scale)
         model.train(X_train, y_train)
-        perf = model.evaluate(X_val, y_val)['pr_auc']
 
-    def train(self):
-        """
-        Train sector-specific models.
-        """
-
-        logger.info("START training stocksense models")
-
-        # load training data
-        data = load_processed_data()
-
-        for sector in data['sector'].unique():
-            # log run
-            logger.info(f"START training {sector} sector model")
-
-            # sector folder
-            sector_path = Path(f"models/{sector.lower()}")
-            sector_path.mkdir(parents=True, exist_ok=True)
-
-            # find last trade date
-            self.last_trade_date = find_last_trading_date()
-
-            # set training period with quarter gap
-            train_df = data.filter(
-                (pl.col('tdq') < self.last_trade_date) &
-                (pl.col('sector') == sector)
-            )
-            train_df = train_df.filter(~pl.all_horizontal(pl.col(self.target_col).is_null()))
-
-            # filter cols
-            aux_cols = ['datadate', 'rdq', 'sector', 'freturn', 'adj_freturn']
-            train_df = train_df.select([c for c in train_df.columns if c not in aux_cols])
-
-            # create GA instance
-            ga = GeneticAlgorithm(
-                num_generations=50,
-                num_parents_mating=20,
-                sol_per_pop=50,
-                num_genes=9,
-                fitness_func=fitness_function_wrapper(
-                    train_df,
-                    self.date_col,
-                    self.target_col,
-                    self.train_start,
-                    self.val_train_window,
-                    self.val_eval_window
-                ),
-                init_range_low=[0.01, 100, 3, 1, 0, 0.5, 0.5, 0, 1],
-                init_range_high=[0.3, 1000, 10, 10, 5, 1, 1, 10, 10],
-                gene_space=[
-                    {'low': 0.01, 'high': 0.3},
-                    {'low': 100, 'high': 1000},
-                    {'low': 3, 'high': 10},
-                    {'low': 1, 'high': 10},
-                    {'low': 0, 'high': 5},
-                    {'low': 0.5, 'high': 1},
-                    {'low': 0.5, 'high': 1},
-                    {'low': 0, 'high': 10},
-                    {'low': 1, 'high': 10}
-                ],
-                keep_elitism=5
-            )
-
-            # train GA to optimize hyperparameters
-            ga.create_instance()
-            ga.train()
-            best_solution, best_solution_fitness, best_solution_idx = ga.best_solution()
-
-            # train xgboost with best parameter set
-            X_train = train_df.select(pl.exclude([self.target_col, self.date_col])).to_pandas()
-            y_train = train_df.select(self.target_col).to_pandas().values.ravel()
-            model = XGBoostModel(best_solution)
-            model.train(X_train, y_train)
-            model.save_model(sector_path / f"{sector}_{self.last_trade_date}.pkl")
+        # save model
+        model.save_model(model_path / f"xgb_{self.last_trade_date}.pkl")
 
     def score(self):
         """
         Classify using sector-specific models.
         """
 
-        logger.info("START training stocksense models")
+        logger.info("START stocksense scoring")
 
         # load training data
         data = load_processed_data()
 
-        for sector in data['sector'].unique():
-            # log run
-            logger.info("START scoring {sector} stocks")
+        # find last trade date
+        self.last_trade_date = find_last_trading_date()
 
-            # sector folder
-            sector_path = Path(f"models/{sector.lower()}")
+        # log run
+        logger.info(f"START stocksense scoring {self.last_trade_date}")
 
-            # find last trade date
-            self.last_trade_date = find_last_trading_date()
+        # set up model folder
+        model_path = Path("models/")
 
-            # set scoring period to last trade date
-            test_df = data.filter(
-                (pl.col('tdq') == self.last_trade_date) &
-                (pl.col('sector') == sector)
-            )
-            test_df = test_df.filter(~pl.all_horizontal(pl.col(self.target_col).is_null()))
+        # set scoring period to last trade date
+        test_df = data.filter((pl.col('tdq') == self.last_trade_date))
+        test_df = test_df.filter(~pl.all_horizontal(pl.col(self.target_col).is_null()))
 
-            # filter cols
-            aux_cols = ['datadate', 'rdq', 'tic', 'sector', 'freturn', 'adj_freturn']
-            test_df = test_df.select([c for c in test_df.columns if c not in aux_cols])
-            test_df = test_df.select(
-                pl.exclude([self.target_col, self.date_col])
-            ).to_pandas()
+        # filter cols
+        aux_cols = ['datadate', 'rdq', 'tic', 'sector', 'freturn', 'adj_freturn']
+        test_df = test_df.select([c for c in test_df.columns if c not in aux_cols])
+        test_df = test_df.select(
+            pl.exclude([self.target_col, self.date_col])
+        ).to_pandas()
 
-            try:
-                model_path = sector_path / f"{sector}_{self.last_trade_date}.pkl"
-                model = XGBoostModel().load_model(model_path)
-                model.predict_proba(test_df)
-            except Exception:
-                logger.error(f"ERROR {sector} {self.last_trade_date }: no model available.")
+        try:
+            model_path = model_path / f"xgb_{self.last_trade_date}.pkl"
+            model = XGBoostModel().load_model(model_path)
+            model.predict_proba(test_df)
+        except Exception:
+            logger.error(f"ERROR: no model available ({self.last_trade_date }).")
 
 
 def load_processed_data():

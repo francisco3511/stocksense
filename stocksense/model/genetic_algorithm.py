@@ -17,8 +17,7 @@ class GeneticAlgorithm:
         fitness_func,
         init_range_low,
         init_range_high,
-        gene_space,
-        keep_elitism
+        gene_space
     ):
         self.num_generations = num_generations
         self.num_parents_mating = num_parents_mating
@@ -28,9 +27,11 @@ class GeneticAlgorithm:
         self.init_range_low = init_range_low
         self.init_range_high = init_range_high
         self.gene_space = gene_space
-        self.keep_elitism = keep_elitism
         self.random_seed = get_config('model')['seed']
         self.ga_instance = None
+        self.no_improvement_count = 0
+        self.best_fitness_value = 0
+        self.no_improvement_limit = 5
 
     def create_instance(self):
         logger.info("creating GA instance")
@@ -42,23 +43,37 @@ class GeneticAlgorithm:
             num_genes=self.num_genes,
             init_range_low=self.init_range_low,
             init_range_high=self.init_range_high,
-            keep_elitism=self.keep_elitism,
             gene_space=self.gene_space,
             mutation_percent_genes=10,
-            mutation_type="random",
+            crossover_probability=0.8,
             parent_selection_type="tournament",
-            on_generation=self.log_generation,
+            keep_parents=2,
+            mutation_type="random",
+            crossover_type="single_point",
+            on_generation=self.on_generation,
+            parallel_processing=["thread", 6]
         )
 
-    def log_generation(self, ga_instance):
+    def on_generation(self, ga_instance):
         """
-        Callback function that logs information after each generation.
+        Callback function.
         """
-        # Log the best solution and fitness for the current generation
+
         best_solution, best_solution_fitness, best_solution_idx = ga_instance.best_solution()
         logger.info(f"generation {ga_instance.generations_completed}:")
-        logger.info(f"  best solution: {best_solution}")
-        logger.info(f"  best fitness: {best_solution_fitness}")
+        logger.info(f"\tbest solution: {best_solution}")
+        logger.info(f"\tbest fitness: {best_solution_fitness}")
+
+        # check if there is improvement
+        if best_solution_fitness > self.best_fitness_value:
+            self.best_fitness_value = best_solution_fitness
+            self.no_improvement_count = 0
+        else:
+            self.no_improvement_count += 1
+
+        if self.no_improvement_count >= self.no_improvement_limit:
+            print(f"no improvement for {self.no_improvement_limit} generations. stopping GA.")
+            ga_instance.terminate()
 
     def train(self):
         if self.ga_instance is None:
@@ -82,26 +97,54 @@ class GeneticAlgorithm:
         self.ga_instance.plot_fitness()
 
 
-def walk_forward_val_split(data, start_year, train_window, val_window):
+def get_train_val_split(
+    data: pl.DataFrame,
+    start_year: int,
+    train_window: int,
+    val_window: int
+):
     """
-    Split the dataset into walk-forward training, validation, and test sets.
+    Split the dataset into training and validation sets,
+    based on walk-forward validation strategy.
+
+    Parameters
+    ----------
+    data : pl.DataFrame
+        Training data to split.
+    start_year : int
+        Starting year of walk-forward split.
+    train_window : int
+        Walk-forward window size.
+    val_window : int
+        Evaluation window size.
+
+    Returns
+    -------
+    tuple[pl.DataFrame]
+        Training and validation data.
     """
-    train_start = start_year
-    val_start = train_start + train_window + 1
-    while val_start + val_window < dt.datetime.now().year:
-        train = data.filter(
-            (pl.col('tdq').dt.year() >= train_start) &
-            (pl.col('tdq').dt.year() < train_start + train_window)
-        )
-        val = data.filter(
-            (pl.col('tdq').dt.year() >= val_start) &
-            (pl.col('tdq').dt.year() < val_start + val_window)
-        )
-        yield train, val
-        train_start += 1
+
+    train = data.filter(
+        (pl.col('tdq').dt.year() >= start_year) &
+        (pl.col('tdq').dt.year() < start_year + train_window)
+    )
+    val = data.filter(
+        (pl.col('tdq').dt.year() > start_year + train_window) &
+        (pl.col('tdq').dt.year() <= start_year + train_window + val_window)
+    )
+    return train, val
 
 
-def fitness_function_wrapper(data, date_col, target_col, start_year, train_window, val_window):
+def fitness_function_wrapper(
+    data,
+    tic_col,
+    date_col,
+    target_col,
+    start_year,
+    train_window,
+    val_window,
+    scale
+):
     def fitness_function(ga_instance, solution, solution_idx):
         # hyperparameters from GA solution
         params = {
@@ -115,8 +158,7 @@ def fitness_function_wrapper(data, date_col, target_col, start_year, train_windo
             'colsample_bytree': solution[6],
             'reg_alpha': solution[7],
             'reg_lambda': solution[8],
-            'scale_pos_weight': 1,
-            'use_label_encoder': False,
+            'scale_pos_weight': scale,
             'eval_metric': 'logloss',
             'nthread': -1,
             'seed': get_config('model')['seed']
@@ -125,31 +167,27 @@ def fitness_function_wrapper(data, date_col, target_col, start_year, train_windo
         # init XGBoost model with GA solution parameters
         model = XGBoostModel(params)
 
-        # walk-forward evaluation loop
+        # expanding-window evaluation loop
         perfs = []
-        for train, val in walk_forward_val_split(
-            data,
-            start_year,
-            train_window,
-            val_window
-        ):
-
-            # split data
-            X_train = train.select(pl.exclude(['tic', target_col, date_col])).to_pandas()
+        window = train_window
+        while start_year + window + val_window < dt.datetime.now().year - 1:
+            # split folds
+            train, val = get_train_val_split(data, start_year, window, val_window)
+            X_train = train.select(pl.exclude([tic_col, target_col, date_col])).to_pandas()
             y_train = train.select(target_col).to_pandas().values.ravel()
-            X_val = val.select(pl.exclude(['tic', target_col, date_col])).to_pandas()
+            X_val = val.select(pl.exclude([tic_col, target_col, date_col])).to_pandas()
             y_val = val.select(target_col).to_pandas().values.ravel()
 
             # train on training set
             model.train(X_train, y_train)
 
-            # evaluate performance on validation set
-            perf = model.evaluate(X_val, y_val)['pr_auc']
+            # evaluate performance on validation setw
+            perf = model.evaluate(X_val, y_val)['roc_auc']
             perfs.append(perf)
+            window += 1
 
         # average performance across all splits
         avg_perf = sum(perfs) / len(perfs)
-        print(avg_perf)
         return avg_perf
 
     return fitness_function

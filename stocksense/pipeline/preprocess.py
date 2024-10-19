@@ -156,6 +156,7 @@ class Preprocess():
                 df.with_columns(pl.col(feature).clip(-30, 30))
             )
 
+        # remove inf values
         float_cols = df.select(pl.col(pl.Float64)).columns
 
         df = df.with_columns([
@@ -164,6 +165,15 @@ class Preprocess():
             .replace(float("-inf"), float("nan")).alias(col)
             for col in float_cols
         ])
+
+        # adjust target returns to percentage
+        df = df.with_columns([
+            pl.col('freturn') * 100,
+            pl.col('adj_freturn') * 100
+        ])
+
+        # get sector dummies
+        df = df.to_dummies(columns=['sector'])
 
         return df
 
@@ -437,17 +447,22 @@ def compute_market_ratios(
     pl.DataFrame
         Main dataset with added ratios.
     """
-    # compute momentum and market return features
+    # compute momentum and price features
     market_df = market_df.with_columns([
         plta.rsi(pl.col('close'), timeperiod=14).over('tic').alias('rsi_14d'),
         plta.rsi(pl.col('close'), timeperiod=30).over('tic').alias('rsi_30d'),
         plta.rsi(pl.col('close'), timeperiod=60).over('tic').alias('rsi_60d'),
+        plta.rsi(pl.col('close'), timeperiod=90).over('tic').alias('rsi_90d'),
+        plta.rsi(pl.col('close'), timeperiod=360).over('tic').alias('rsi_1y'),
         pl.col('close').pct_change(MONTHLY_TRADING_DAYS).over('tic').alias('price_mom'),
         pl.col('close').pct_change(QUARTERLY_TRADING_DAYS).over('tic').alias('price_qoq'),
         pl.col('close').pct_change(YEARLY_TRADING_DAYS).over('tic').alias('price_yoy'),
         (pl.col('close').log() - pl.col('close').log().shift(1))
         .over('tic').alias('log_return')
-    ]).with_columns([
+    ])
+
+    # compute volatility
+    market_df = market_df.with_columns([
         pl.col('log_return').rolling_std(MONTHLY_TRADING_DAYS).over('tic').alias('vol_m'),
         pl.col('log_return').rolling_std(QUARTERLY_TRADING_DAYS).over('tic').alias('vol_q'),
         pl.col('log_return').rolling_std(YEARLY_TRADING_DAYS).over('tic').alias('vol_y')
@@ -474,8 +489,8 @@ def compute_market_ratios(
     )
     df = df.sort(by=['tic', 'tdq'])
 
-    # compute market features
-    df = df.with_columns([  # compute forward returns
+    # compute agg market features
+    df = df.with_columns([
         ((pl.col('index_adj_close').shift(-PRED_QUARTERS) / pl.col('index_adj_close')) - 1)
         .over('tic').alias('index_freturn'),
         ((pl.col('adj_close').shift(-PRED_QUARTERS) / pl.col('adj_close')) - 1)
@@ -487,7 +502,7 @@ def compute_market_ratios(
         (pl.col('price_yoy') / pl.col('index_yoy')).alias('momentum_yoy'),
         (pl.col('niq').rolling_sum(4) / pl.col('cshoq')).over('tic').alias('eps')
     ]).with_columns([
-        (pl.col('adj_freturn') > 0).cast(pl.Int8).alias('adj_fperf'),
+        (pl.col('adj_freturn') > FPERF_THRES).cast(pl.Int8).alias('adj_fperf'),
         (pl.col('freturn') > FPERF_THRES).cast(pl.Int8).alias('fperf'),
         (pl.col('close') / pl.col('eps')).alias('pe'),
         (pl.col('close') * pl.col('cshoq')).alias('mkt_cap')

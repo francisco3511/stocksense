@@ -6,7 +6,7 @@ from config import get_config
 
 
 class XGBoostModel:
-    def __init__(self, params=None, scale=1):
+    def __init__(self, params=None, scale=1.0):
         self.params = params if params else {
             'objective': 'binary:logistic',
             'learning_rate': 0.1,
@@ -19,9 +19,8 @@ class XGBoostModel:
             'reg_alpha': 0,
             'reg_lambda': 1,
             'scale_pos_weight': scale,
-            'use_label_encoder': False,
             'eval_metric': 'logloss',
-            'nthread': 2,
+            'nthread': -1,
             'seed': get_config('model')['seed']
         }
         self.model = None
@@ -38,11 +37,11 @@ class XGBoostModel:
     def predict_proba(self, X):
         if self.model is None:
             raise Exception("Model is not trained yet. Train the model before predicting.")
-        return self.model.predict_proba(X)
+        return self.model.predict_proba(X)[:, 1]
 
     def evaluate(self, X_test, y_test):
         y_pred = self.predict(X_test)
-        y_proba = self.predict_proba(X_test)[:, 1]
+        y_proba = self.predict_proba(X_test)
 
         eval = {
             'acc': skm.accuracy_score(y_test, y_pred),
