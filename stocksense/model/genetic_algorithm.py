@@ -51,7 +51,7 @@ class GeneticAlgorithm:
             mutation_type="random",
             crossover_type="single_point",
             on_generation=self.on_generation,
-            parallel_processing=["thread", 6]
+            parallel_processing=["thread", 4]
         )
 
     def on_generation(self, ga_instance):
@@ -182,7 +182,7 @@ def fitness_function_wrapper(
             model.train(X_train, y_train)
 
             # evaluate performance on validation setw
-            perf = model.evaluate(X_val, y_val)['roc_auc']
+            perf = model.evaluate(X_val, y_val)['pr_auc']
             perfs.append(perf)
             window += 1
 

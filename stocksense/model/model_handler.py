@@ -105,7 +105,25 @@ class ModelHandler:
         # train GA to optimize hyperparameters
         ga.create_instance()
         ga.train()
+
         best_solution, best_solution_fitness, best_solution_idx = ga.best_solution()
+
+        params = {
+            'objective': 'binary:logistic',
+            'learning_rate': best_solution[0],
+            'n_estimators': int(best_solution[1]),
+            'max_depth': int(best_solution[2]),
+            'min_child_weight': best_solution[3],
+            'gamma': best_solution[4],
+            'subsample': best_solution[5],
+            'colsample_bytree': best_solution[6],
+            'reg_alpha': best_solution[7],
+            'reg_lambda': best_solution[8],
+            'scale_pos_weight': scale,
+            'eval_metric': 'logloss',
+            'nthread': -1,
+            'seed': get_config('model')['seed']
+        }
 
         # set final training fold
         X_train = train_df.select(
@@ -114,7 +132,7 @@ class ModelHandler:
         y_train = train_df.select(self.target_col).to_pandas().values.ravel()
 
         # train xgboost
-        model = XGBoostModel(best_solution, scale=scale)
+        model = XGBoostModel(params, scale=scale)
         model.train(X_train, y_train)
 
         # save model

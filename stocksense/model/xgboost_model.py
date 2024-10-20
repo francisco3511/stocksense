@@ -10,7 +10,7 @@ class XGBoostModel:
         self.params = params if params else {
             'objective': 'binary:logistic',
             'learning_rate': 0.1,
-            'n_estimators': 100,
+            'n_estimators': 50,
             'max_depth': 3,
             'min_child_weight': 1,
             'gamma': 0,
@@ -42,10 +42,11 @@ class XGBoostModel:
     def evaluate(self, X_test, y_test):
         y_pred = self.predict(X_test)
         y_proba = self.predict_proba(X_test)
+        y_pred_custom = (y_proba > 0.70).astype(int)
 
         eval = {
             'acc': skm.accuracy_score(y_test, y_pred),
-            'prec': skm.precision_score(y_test, y_pred),
+            'prec': skm.precision_score(y_test, y_pred_custom),
             'f1': skm.f1_score(y_test, y_pred),
             'wf1': skm.f1_score(y_test, y_pred, average='weighted'),
             'rec': skm.recall_score(y_test, y_pred),
