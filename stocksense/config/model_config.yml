@@ -2,6 +2,7 @@
     # insider trading features
     - 'n_purch'
     - 'n_sales'
+    - 'insider_balance'
     # growth, momentum and volatility features
     - 'price_mom'
     - 'price_qoq'
@@ -70,7 +71,9 @@
     - 'ltcr_yoy'
     - 'pe_qoq'
     - 'pe_yoy'
+    - 'pb_qoq'
     - 'pb_yoy'
+    - 'ps_qoq'
     - 'ps_yoy'
 'targets':
     - 'freturn'
