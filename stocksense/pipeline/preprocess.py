@@ -1,12 +1,11 @@
 import polars as pl
 import numpy as np
 import datetime as dt
+import polars_talib as plta
 from loguru import logger
 
 from config import get_config
 from database_handler import DatabaseHandler
-
-import polars_talib as plta
 
 BIWEEKLY_TRADING_DAYS = 10
 MONTHLY_TRADING_DAYS = 21
@@ -30,8 +29,6 @@ class Preprocess():
         self.db = DatabaseHandler()
         self.features = get_config('model')['features']
         self.targets = get_config('model')['targets']
-        self.index_data = None
-        self.data = None
 
     def run(self):
         """
@@ -53,11 +50,8 @@ class Preprocess():
         """
         logger.info("START processing S&P500 index data")
 
-        # load index data
         index_df = self.db.fetch_index_data()
         index_df = index_df.sort(by=['date'])
-
-        # parse date
         index_df = index_df.with_columns(
             pl.col('date').str.strptime(pl.Date, format="%Y-%m-%d")
         )
@@ -78,7 +72,6 @@ class Preprocess():
             pl.col('log_return').rolling_std(YEARLY_TRADING_DAYS).alias('index_vol_yoy')
         ])
 
-        # adjust column names
         index_df = index_df.rename({
             'date': 'index_date',
             'close': 'index_close',
@@ -120,19 +113,11 @@ class Preprocess():
         # detect splits and adjust data
         df = adjust_shares(df)
 
-        # compute insider trading features
+        # compute features
         df = compute_insider_trading_features(df, insider_df)
-
-        # compute financial ratios
         df = compute_financial_ratios(df)
-
-        # compute price/market ratios
         df = compute_market_ratios(df, market_df, self.index_data)
-
-        # compute growth metrics
         df = compute_growth_ratios(df)
-
-        # compute forward performance metrics
         df = compute_performance_targets(df)
 
         # add id info and select relevant features
@@ -211,7 +196,7 @@ class Preprocess():
         self.data.write_csv(file_name)
 
 
-def generate_quarter_dates(start_year: int, end_year: int) -> pl.DataFrame:
+def generate_quarter_dates(start_year: int, end_year: int) -> list:
     """
     Function to generate quarter-end dates for a range of years.
     """
@@ -231,19 +216,14 @@ def compute_trade_date(df: pl.DataFrame) -> pl.DataFrame:
     Compute trade dates.
     """
 
-    # get the range of years in the original dataframe
-    min_year = df['rdq'].min().year
-    max_year = df['rdq'].max().year
+    min_year = df['rdq'].dt.year().min()
+    max_year = df['rdq'].dt.year().max()
 
-    # generate all quarter-end dates for the relevant years
     quarter_dates = generate_quarter_dates(min_year, max_year)
-
-    # create a Polars DataFrame for the quarter-end dates
     quarter_df = pl.DataFrame({
         'tdq': quarter_dates
     }).with_columns(pl.col('tdq').dt.date())
 
-    # join where each date is matched with the next available quarter-end
     df = df.sort(by=['rdq', 'tic'])
     df = df.join_asof(
         quarter_df,
@@ -283,13 +263,17 @@ def adjust_shares(df: pl.DataFrame) -> pl.DataFrame:
     """
     df = df.with_columns(
         pl.col('cshoq').fill_null(strategy='backward').over('tic')
-    ).with_columns(
+    )
+    df = df.with_columns(
         (pl.col('cshoq') / pl.col('cshoq').shift()).over('tic').alias('csho_ratio')
-    ).with_columns(
+    )
+    df = df.with_columns(
         ((pl.col('cshoq') / pl.col('cshoq').shift() - 1) > 0.25).over('tic').alias('stock_split')
-    ).with_columns(
+    )
+    df = df.with_columns(
         pl.col('stock_split').fill_null(False)
-    ).with_columns(
+    )
+    df = df.with_columns(
         pl.col('csho_ratio').map_elements(
             map_to_closest_split_factor,
             return_dtype=pl.Float64
@@ -320,7 +304,6 @@ def adjust_shares(df: pl.DataFrame) -> pl.DataFrame:
         .alias('cshoq')
     )
 
-    # sort back to original order
     df = df.sort(by=['tic', 'tdq'])
     return df.drop(['csho_ratio', 'split_factor', 'adjustment_factor', 'cum_adjustment_factor'])
 
@@ -330,29 +313,23 @@ def compute_insider_purchases(
     insider_df: pl.DataFrame
 ) -> pl.DataFrame:
     """
-    Optimized version of computing insider buying quarterly features.
+    Computes insider purchases quarterly features.
     """
 
-    # Filter relevant purchases first (before cross join)
     insider_filtered_lazy = insider_df.lazy().filter(
         (pl.col('transaction_type') == "P - Purchase")
     )
-
-    # Perform the join in one step, and groupby for both counts and sums together
     df_lazy = df.lazy()
 
-    # Join on matching tickers, and filter by date
     df_filtered_lazy = df_lazy.join(
         insider_filtered_lazy,
-        how='inner',  # inner join on ticker first
+        how='inner',
         left_on=['tic'],
         right_on=['tic']
     ).filter(
         (pl.col('filling_date') < pl.col('tdq')) &
         (pl.col('filling_date') >= pl.col('tdq').dt.offset_by('-3mo'))
     )
-
-    # Aggregate both n_purch and val_purch in a single groupby to avoid double join
     df_agg_lazy = df_filtered_lazy.group_by(['tic', 'tdq']).agg([
         pl.col('filling_date').count().alias('n_purch'),
         (
@@ -362,8 +339,6 @@ def compute_insider_purchases(
             .cast(pl.Float64) / 1000000
         ).sum().round(3).alias('val_purch')
     ])
-
-    # Left join back to the original dataframe, fill nulls
     result = df_lazy.join(df_agg_lazy, on=['tic', 'tdq'], how='left').fill_null(0)
     return result.collect()
 
@@ -373,22 +348,18 @@ def compute_insider_sales(
     insider_df: pl.DataFrame
 ) -> pl.DataFrame:
     """
-    Optimized version of computing insider buying quarterly features.
+    Computes insider sales quarterly features.
     """
 
-    # Filter relevant purchases first (before cross join)
     insider_filtered_lazy = insider_df.lazy().filter(
         (pl.col('transaction_type') == "S - Sale") |
         (pl.col('transaction_type') == "S - Sale+OE")
     )
-
-    # Perform the join in one step, and groupby for both counts and sums together
     df_lazy = df.lazy()
 
-    # Join on matching tickers, and filter by date
     df_filtered_lazy = df_lazy.join(
         insider_filtered_lazy,
-        how='inner',  # inner join on ticker first
+        how='inner',
         left_on=['tic'],
         right_on=['tic']
     ).filter(
@@ -396,7 +367,6 @@ def compute_insider_sales(
         (pl.col('filling_date') >= pl.col('tdq').dt.offset_by('-3mo'))
     )
 
-    # Aggregate both n_purch and val_purch in a single groupby to avoid double join
     df_agg_lazy = df_filtered_lazy.group_by(['tic', 'tdq']).agg([
         pl.col('filling_date').count().alias('n_sales'),
         (
@@ -407,7 +377,6 @@ def compute_insider_sales(
         ).sum().round(3).alias('val_sales')
     ])
 
-    # Left join back to the original dataframe, fill nulls
     result = df_lazy.join(df_agg_lazy, on=['tic', 'tdq'], how='left').fill_null(0)
     return result.collect()
 
@@ -593,7 +562,7 @@ def compute_performance_targets(df: pl.DataFrame) -> pl.DataFrame:
         ((pl.col('adj_close').shift(-4) / pl.col('adj_close')) - 1)
         .over('tic').alias('freturn_4q'),
     ])
-    df = df.with_columns((pl.col('freturn') - pl.col('index_freturn')).alias('adj_freturn')),
+    df = df.with_columns((pl.col('freturn') - pl.col('index_freturn')).alias('adj_freturn'))
     df = df.with_columns([
         (pl.col('adj_freturn') > OVER_PERFORMACE_THRES).cast(pl.Int8).alias('adj_fperf'),
         (pl.col('freturn_1q') > PERFORMACE_THRES).cast(pl.Int8).alias('fperf_1q'),
@@ -638,7 +607,6 @@ def compute_market_ratios(
     # compute volatility features
     market_df = compute_daily_volatility_features(market_df)
 
-    # join market data to main dataset
     df = df.join_asof(
         market_df.drop(['volume']),
         left_on='tdq',
@@ -647,8 +615,6 @@ def compute_market_ratios(
         strategy='backward',
         tolerance=dt.timedelta(days=7)
     )
-
-    # join sp500 data to main dataset
     df = df.sort(by=['tdq', 'tic'])
     df = df.join_asof(
         index_df,

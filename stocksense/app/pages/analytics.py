@@ -1,6 +1,7 @@
 
 import streamlit as st
 import pandas as pd
+import polars as pl
 
 # plotting
 import plotly.graph_objects as go
@@ -13,10 +14,9 @@ from st_aggrid.shared import JsCode
 import talib as ta
 
 from database_handler import DatabaseHandler
-from pipeline import Etl, Preprocess
 
 
-MARGIN = dict(l=0,r=10,b=10,t=25)
+MARGIN = dict(l=0, r=10, b=10, t=25)
 
 # JsCode to highlight cells when surprise < 0
 cellsytle_jscode = JsCode(
@@ -36,7 +36,7 @@ st.set_page_config(layout='wide', page_title='StockSense', page_icon='📈')
 
 
 def list_stocks():
-    
+
     # read control file
     stocks = DatabaseHandler().fetch_stock_info()
 
@@ -72,20 +72,19 @@ def load_stock_data(ticker, update=False):
         # update stock data
         handler = Etl([ticker])
         handler.extract()
-        
+
     # get stock data handler
     info = DatabaseHandler().fetch_stock_info(ticker)
     metadata = DatabaseHandler().fetch_metadata(ticker)
     mkt_df = DatabaseHandler().fetch_market_data(ticker)
     fin_df = DatabaseHandler().fetch_financial_data(ticker)
     index_df = DatabaseHandler().fetch_sp_data()
-    
+
     # calculate the MAs for graphs
     mkt_df['SMA-50'] = ta.SMA(mkt_df['close'],timeperiod=50)
     mkt_df['SMA-200'] = ta.SMA(mkt_df['close'], timeperiod=200)
-        
-    return mkt_df, fin_df
 
+    return mkt_df, fin_df
 
 
 def format_number(number):
@@ -100,13 +99,13 @@ def format_number(number):
         return f"{number / 1_000_000:.2f}M"
     else:
         return str(number)
-    
+
 
 def plot_bubble_chart(data):
     if data.empty:
         print("No data available to plot.")
         return
-    
+
     fig = px.scatter(
         data,
         x='Date',
@@ -120,17 +119,28 @@ def plot_bubble_chart(data):
 
     fig.update_traces(marker=dict(line=dict(width=1, color='Black')))
     fig.show()
-    
-    
+
+
 def main():
-    
+    """
+    Main app script.
+    """
+
+    # Set base configuration
+    st.set_page_config(
+        layout="wide",
+        page_title="Explore Stock Data",
+        icon="🌎"
+    )
+    st.sidebar.markdown('#')
+
     st.sidebar.header("Options: ")
 
     ticker = st.sidebar.selectbox(
-        'Choose Ticker',
+        "Pick stock",
         options=list_stocks(),
-        help = 'Select a ticker',
-        key='ticker'
+        help="Select a ticker",
+        key="ticker"
     )
 
     selected_range = st.sidebar.select_slider(
@@ -143,7 +153,7 @@ def main():
 
     # retrieve market data
     info, market_df, fin_df = load_stock_data(ticker, update)
-    
+
     name = info[0]
     tic = info[1]
 
@@ -158,7 +168,7 @@ def main():
     start_y1 = max_date + pd.DateOffset(months=-12)
     start_all = min_date
     end_date = max_date
-    
+
     start_date = start_all
 
     match selected_range:
@@ -180,7 +190,7 @@ def main():
 
     # market tab
     with tab1:
-        
+
         # filter dates
         mdf = market_df[(market_df['date'] >= start_date) & (market_df['date'] <= end_date)]
 
@@ -207,7 +217,7 @@ def main():
             else:
                 st.text('NA')
             st.divider()
-        
+
         with col3:
             st.text('EPS (TTM)')
             st.text(info['trailingEps'])
@@ -231,10 +241,10 @@ def main():
                 st.text('NA')
 
         with col4:
-            
-            # Construct a 2 x 1 Plotly figure 
+
+            # Construct a 2 x 1 Plotly figure
             fig = make_subplots(rows=2, cols=1, vertical_spacing=0.01, shared_xaxes=True)
-            
+
             # Remove dates without values
             fig.update_xaxes(rangebreaks=[dict(values=date_breaks(mdf))])
 
@@ -250,38 +260,45 @@ def main():
                 row=1,
                 col=1
             )
-            
+
             # Color maps for different MAs
             COLORS_MAPPER = {
                 'SMA-50': '#38BEC9',
                 'SMA-200': '#E67E22',
             }
-            
+
             for ma, col in COLORS_MAPPER.items():
                 fig.add_trace(go.Scatter(x=mdf['Date'], y=mdf[ma], name=ma, marker_color=col))
-                
+
             # colors for the Bar chart
-            colors = ['#27AE60' if dif >= 0 else '#B03A2E' for dif in mdf['Close'].diff().values.tolist()]
-            
-            # Adds the volume as a bar chart
-            fig.add_trace(go.Bar(x=mdf['Date'], y=mdf['Volume'], showlegend=False, marker_color=colors), row=2, col=1)
-            
+            colors = [
+                '#27AE60' if dif >= 0 else '#B03A2E'
+                for dif in mdf['Close'].diff().values.tolist()
+            ]
+
+            # add volume bar chart
+            fig.add_trace(
+                go.Bar(x=mdf['date'], y=mdf['volume'], showlegend=False, marker_color=colors),
+                row=2,
+                col=1
+            )
+
             # add title
             layout = go.Layout(title='Price, MA and Volume', height=500, margin=MARGIN)
-            
+
             fig.update_layout(layout)
             st.plotly_chart(fig, theme='streamlit', use_container_width=True)
-            
+
     with tab2:
-        
+
         # filter dates
         fdf = fin_df[(fin_df['datadate'] >= start_date) & (fin_df['datadate'] <= end_date)]
 
         # set up tabs
         earn_tab, eps_tab = st.tabs(["Earnings", "EPS"])
-        
+
         with eps_tab:
-            
+
             gb = GridOptionsBuilder()
             # Pagination is set to 10 rows per page
             gb.configure_pagination(paginationAutoPageSize=False, paginationPageSize=10)
@@ -319,13 +336,13 @@ def main():
             col1, col2 = st.columns([3, 1])
             with col1:
                 AgGrid(
-                    fdf[::-1], 
-                    gridOptions=gridOptions, theme="balham", 
+                    fdf[::-1],
+                    gridOptions=gridOptions, theme="balham",
                     #columns_auto_size_mode=ColumnsAutoSizeMode.FIT_ALL_COLUMNS_TO_VIEW,
                     allow_unsafe_jscode=True)
             with col2:
                 st.write("")
-            
+
             fig = go.Figure()
             fig.add_trace(go.Scatter(
                 x=fdf["rdq"], y=fdf["eps_rep"],
@@ -353,10 +370,10 @@ def main():
             fig.update_layout(title="Reported EPS (Categorized)", xaxis_title=None, legend_title=None, yaxis_title=None,
                             margin=MARGIN, legend=dict(orientation="h"))
             st.plotly_chart(fig, theme='streamlit', use_container_width=True)
-            
+
     with tab3:
         pass
-    
+
 
 if __name__ == "__main__":
     main()

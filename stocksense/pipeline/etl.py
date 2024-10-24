@@ -128,7 +128,6 @@ class ETL:
         """
         logger.info("extracting S&P500 data")
         try:
-            # scrape index data and save to db
             scraper = Scraper('^GSPC', self.fin_source)
             data = scraper.get_market_data(self.base_date)
             data = data.drop('tic')
@@ -169,11 +168,9 @@ class ETL:
             stock = self.db.fetch_stock(tic).row(0, named=True)
             last_update = stock['last_update']
         except Exception:
-            # if stock information is not stored on main table, raise exception
             logger.error(f"{tic}: no stock {tic} info available.")
             return False
 
-        # create scraper instance for this stock and extract all
         scraper = Scraper(tic, self.fin_source)
         if not self.extract_fundamental_data(tic, scraper, last_update):
             # if no data found and no data for past 2yrs, flag as inactive
@@ -182,7 +179,6 @@ class ETL:
                 logger.info(f"{tic}: flagged as inactive")
                 return False
 
-        # extract stock info and update status
         if not self.extract_info(tic, scraper):
             # if no info found and no data for past yr, flag as inactive
             if last_update.year < dt.datetime.now().year - 1:
@@ -190,9 +186,8 @@ class ETL:
                 logger.info(f"{tic}: flagged as inactive")
             return False
 
-        # extract market data
-        self.extract_market_data(tic, scraper, last_update)
-        self.extract_insider_data(tic, scraper, last_update)
+        self.extract_market_data(tic, scraper)
+        self.extract_insider_data(tic, scraper)
         return True
 
     def extract_info(self, tic: str, scraper: Scraper) -> bool:
@@ -212,9 +207,7 @@ class ETL:
             Success status.
         """
         try:
-            # get stock info
             info = scraper.get_stock_info()
-            # update db
             self.db.insert_info(info)
             logger.info(f'{tic}: updated stock info')
             return True
@@ -243,43 +236,38 @@ class ETL:
         """
 
         try:
-            # parse table dates
             fin_data = self.db.fetch_financial_data(tic)
             if fin_data.is_empty():
                 raise Exception(f"{scraper.tic}: no financial data available")
-            start_dt = fin_data['rdq'].max()
+            start_dt = fin_data['datadate'].max()
         except Exception:
             # no past data available for stock
             fin_data = pl.DataFrame(schema=self.db_fields["financial"])
             start_dt = dt.datetime.strptime(self.base_date, '%Y-%m-%d').date()
             logger.warning(f'{tic}: no past financial data found ({last_update})')
 
-        # set end date to present
-        end_dt = dt.datetime.now().date()
-
-        # check if earnings season is possible
-        if (end_dt - start_dt) < dt.timedelta(days=30):
-            logger.warning(f'{tic}: earnings season not reached ({last_update})')
-            return False
         try:
-            # scrape fundamental data
+            end_dt = dt.datetime.now().date()
+            if (end_dt - start_dt) < dt.timedelta(days=80):
+                logger.warning(f'{tic}: earnings season not reached ({last_update})')
+                return False
+
             data = scraper.get_financial_data(
                 start_dt,
                 end_dt
             )
-            # update db
             self.db.insert_financial_data(
                 data[self.db_fields["financial"]]
             )
             self.db.update_stock(tic, {'last_update': end_dt})
 
-            logger.info(f'{tic}: updated financial data ({start_dt}:{end_dt})')
+            logger.success(f'{tic}: updated financial data ({start_dt}:{end_dt})')
             return True
-        except Exception:
-            logger.error(f"{tic}: no new financial data found ({self.fin_source})")
+        except Exception as e:
+            logger.error(f"{tic}: financial data extraction FAILED ({e})")
             return False
 
-    def extract_market_data(self, tic: str, scraper: Scraper, last_update: dt.date) -> bool:
+    def extract_market_data(self, tic: str, scraper: Scraper) -> bool:
         """
         Extract daily market data, including adjusted close, close
         and volume.
@@ -298,12 +286,8 @@ class ETL:
         bool
             Success status.
         """
-
-        # set end date to present
-        end_date = dt.datetime.now().date()
-
         try:
-            # read market data
+            end_date = dt.datetime.now().date()
             mkt_data = self.db.fetch_market_data(tic)
 
             if not mkt_data.is_empty():
@@ -311,20 +295,17 @@ class ETL:
                     logger.info(f'{tic}: market data already up to date ({end_date})')
                     return False
 
-            # scrape market data
             data = scraper.get_market_data(self.base_date)
-
-            # push update to db
             self.db.insert_market_data(
                 data[self.db_fields["market"]]
             )
-            logger.info(f"{tic}: updated market data ({end_date})")
+            logger.success(f"{tic}: updated market data ({end_date})")
             return True
-        except Exception:
-            logger.error(f"{tic}: market data extraction FAILED")
+        except Exception as e:
+            logger.error(f"{tic}: market data extraction FAILED ({e})")
             return False
 
-    def extract_insider_data(self, tic: str, scraper: Scraper, last_update: dt.date) -> bool:
+    def extract_insider_data(self, tic: str, scraper: Scraper) -> bool:
         """
         Extract insider trading data.
 
@@ -342,12 +323,8 @@ class ETL:
         bool
             Success status.
         """
-
-        # set end date to present
-        end_date = dt.datetime.now().date()
-
         try:
-            # read market data
+            end_date = dt.datetime.now().date()
             ins_data = self.db.fetch_insider_data(tic)
 
             if not ins_data.is_empty():
@@ -355,17 +332,14 @@ class ETL:
                     logger.info(f'{tic}: insider data already updated ({end_date})')
                     return False
 
-            # scrape insider data
             data = scraper.get_stock_insider_data()
-
-            # update db
             self.db.insert_insider_data(
                 data[self.db_fields["insider"]]
             )
-            logger.info(f"{tic}: updated insider trading data ({end_date})")
+            logger.success(f"{tic}: updated insider trading data ({end_date})")
             return True
-        except Exception:
-            logger.error(f"{tic}: insider data extraction FAILED")
+        except Exception as e:
+            logger.error(f"{tic}: insider data extraction FAILED ({e})")
             return False
 
     def ingest_all_historical_data(self):
@@ -392,7 +366,6 @@ class ETL:
             self.historical_data_path / 'SP500.csv',
             separator=';'
         )
-
         parsed_date = dt.datetime.strptime(
             self.base_date,
             '%Y-%m-%d'
@@ -415,9 +388,6 @@ class ETL:
         Ingest historical stock data, which consists on a snapshot of
         financial, market and insider trading records from historical
         S&P500 members.
-
-        :param str tic: Target stock ticker.
-        :param Path stock_path: Path to target stock data folder.
         """
         try:
             market_file = list(stock_path.glob('market_*.csv'))[0]
@@ -452,9 +422,6 @@ class ETL:
     def _ingest_market_data(self, market_file: Path, tic: str) -> None:
         """
         Ingest market data from .csv file.
-
-        :param Path market_file: Path to .csv file.
-        :param str tic: Target stock ticker.
         """
         try:
             market_df = pl.read_csv(market_file)
@@ -476,9 +443,6 @@ class ETL:
     def _ingest_insider_data(self, insider_file: Path, tic: str) -> None:
         """
         Ingest insider trading data from .csv file.
-
-        :param Path insider_file: Path to .csv file.
-        :param str tic: Target stock ticker.
         """
         try:
             insider_df = pl.read_csv(insider_file)
@@ -503,9 +467,6 @@ class ETL:
     def _ingest_financials_data(self, financials_file: Path, tic: str) -> None:
         """
         Ingest financial data from .csv file.
-
-        :param Path financials_file: Path to .csv file.
-        :param str tic: Target stock ticker.
         """
         try:
             financials_df = pl.read_csv(financials_file)

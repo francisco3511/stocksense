@@ -2,7 +2,7 @@ from sqlite3 import Connection, Error
 from loguru import logger
 
 
-def create_tables(connection: Connection) -> None:
+def create_tables(connection: Connection | None) -> None:
     tables = {
         'stocks': '''
             CREATE TABLE IF NOT EXISTS stock (

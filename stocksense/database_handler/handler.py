@@ -2,7 +2,7 @@ import numpy as np
 from pathlib import Path
 import polars as pl
 import sqlite3
-from typing import Optional, Union
+from typing import Optional
 
 from database_handler import (
     DatabaseConnection,
@@ -25,142 +25,128 @@ class DatabaseHandler:
     Wrapper for database handling.
     """
 
-    def __init__(self, db_path: str = 'data/database/stock_db.db'):
+    def __init__(self, db_path: str = "data/database/stock_db.db"):
         self.db = DatabaseConnection(Path(db_path))
-        create_tables(self.db.get_connection())
-
-    def insert_stock(self, data: pl.DataFrame):
-        data = data.with_columns(
-            data['last_update'].dt.strftime('%Y-%m-%d'),
-        )
-        insert_data(self.db.get_connection(), "stock", data)
-
-    def insert_info(self, record: dict):
-        insert_record(self.db.get_connection(), "info", record)
-
-    def insert_market_data(self, data: pl.DataFrame):
-        data = data.with_columns(data['date'].dt.strftime('%Y-%m-%d').alias('date'))
-        insert_data(self.db.get_connection(), "market", data)
-
-    def insert_financial_data(self, data: pl.DataFrame):
-        data = data.with_columns(
-            data['rdq'].dt.strftime('%Y-%m-%d'),
-            data['datadate'].dt.strftime('%Y-%m-%d')
-        )
-        insert_data(self.db.get_connection(), "financial", data)
-
-    def insert_insider_data(self, data: pl.DataFrame):
-        data = data.with_columns(
-            data['filling_date'].dt.strftime('%Y-%m-%d'),
-            data['trade_date'].dt.strftime('%Y-%m-%d')
-        )
-        insert_data(self.db.get_connection(), "insider", data)
-
-    def insert_index_data(self, data: pl.DataFrame):
-        data = data.with_columns(data['date'].dt.strftime('%Y-%m-%d'))
-        insert_data(self.db.get_connection(), "sp500", data)
-
-    def delete_stock(self, tic: str):
-        delete_data(self.db.get_connection(), "stock", {"tic": tic})
-
-    def delete_financials(self, tic: str):
-        delete_data(self.db.get_connection(), "financial", {"tic": tic})
-
-    def update_stock(self, tic: str, update_values: dict):
-        update_data(
-            self.db.get_connection(),
-            "stock",
-            update_values,
-            {"tic": tic}
-        )
-
-    def count_stocks(self) -> int:
-        return count_data(self.db.get_connection(), "stock", "tic")
-
-    def fetch_stock(
-        self,
-        tic: Optional[int] = None
-    ) -> Union[pl.DataFrame, tuple]:
-
-        # connect to db and fetch data
         conn = self.db.get_connection()
+        create_tables(conn)
 
-        df = fetch_data(conn, "stock", {"tic": tic} if tic else None)
-        if df.is_empty():
-            return df
-        return df.with_columns(
-            pl.col('last_update').str.to_date(format='%Y-%m-%d')
-        )
+    def insert_stock(self, data: pl.DataFrame) -> None:
+        data = convert_date_columns_to_str(data, ['last_update'])
+        insert_data(self.db.get_connection(), 'stock', data)
 
-    def fetch_info(
-        self,
-        tic: Optional[int] = None
-    ) -> pl.DataFrame:
+    def insert_info(self, record: dict) -> None:
+        insert_record(self.db.get_connection(), 'info', record)
 
-        # connect to db and fetch data
+    def insert_market_data(self, data: pl.DataFrame) -> None:
+        data = convert_date_columns_to_str(data, ['date'])
         conn = self.db.get_connection()
+        insert_data(conn, 'market', data)
 
-        # fetch record for a single stock or all stocks
-        return (
-            fetch_record(conn, "info", {"tic": tic}) if tic
-            else fetch_data(conn, "info")
-        )
+    def insert_financial_data(self, data: pl.DataFrame) -> None:
+        data = convert_date_columns_to_str(data, ['rdq', 'datadate'])
+        conn = self.db.get_connection()
+        insert_data(conn, 'financial', data)
+
+    def insert_insider_data(self, data: pl.DataFrame) -> None:
+        data = convert_date_columns_to_str(data, ['filling_date', 'trade_date'])
+        conn = self.db.get_connection()
+        insert_data(conn, 'insider', data)
+
+    def insert_index_data(self, data: pl.DataFrame) -> None:
+        data = convert_date_columns_to_str(data, ['date'])
+        conn = self.db.get_connection()
+        insert_data(conn, 'sp500', data)
+
+    def delete_stock(self, tic: str) -> None:
+        conn = self.db.get_connection()
+        delete_data(conn, 'stock', {'tic': tic})
+
+    def delete_financials(self, tic: str) -> None:
+        conn = self.db.get_connection()
+        delete_data(conn, 'financial', {'tic': tic})
+
+    def update_stock(self, tic: str, update_values: dict) -> None:
+        conn = self.db.get_connection()
+        update_data(conn, 'stock', update_values, {'tic': tic})
+
+    def count_stocks(self) -> int | None:
+        conn = self.db.get_connection()
+        return count_data(conn, 'stock', 'tic')
+
+    def fetch_stock(self, tic: Optional[str] = None) -> pl.DataFrame:
+        conn = self.db.get_connection()
+        df = fetch_data(conn, 'stock', {'tic': tic} if tic else None)
+        if df is None:
+            return pl.DataFrame()
+        df = convert_str_columns_to_date(df, ['last_update'])
+        return df
+
+    def fetch_info(self, tic: Optional[str] = None) -> pl.DataFrame:
+        conn = self.db.get_connection()
+        df = fetch_data(conn, 'info', {'tic': tic} if tic else None)
+        if df is None:
+            return pl.DataFrame()
+        return df
 
     def fetch_market_data(
         self,
-        tic: Optional[int] = None
+        tic: Optional[str] = None
     ) -> pl.DataFrame:
 
-        # connect to db and fetch data
         conn = self.db.get_connection()
-        df = fetch_data(conn, "market", {"tic": tic} if tic else None)
+        df = fetch_data(conn, 'market', {'tic': tic} if tic else None)
 
-        if df.is_empty():
-            return df
+        if df is None:
+            return pl.DataFrame()
 
-        # format dates
-        return df.with_columns(
-            pl.col('date').str.to_date(format='%Y-%m-%d')
-        )
+        df = convert_str_columns_to_date(df, ['date'])
+        return df
 
     def fetch_financial_data(
         self,
-        tic: Optional[int] = None
+        tic: Optional[str] = None
     ) -> pl.DataFrame:
 
-        # connect to db and fetch data
         conn = self.db.get_connection()
-        df = fetch_data(conn, "financial", {"tic": tic} if tic else None)
-
-        if df.is_empty():
-            return df
-
-        # format dates
-        return df.with_columns([
-            pl.col('datadate').str.to_date(format='%Y-%m-%d'),
-            pl.col('rdq').str.to_date(format='%Y-%m-%d')
-        ])
+        df = fetch_data(conn, 'financial', {'tic': tic} if tic else None)
+        if df is None:
+            return pl.DataFrame()
+        df = convert_str_columns_to_date(df, ['datadate', 'rdq'])
+        return df
 
     def fetch_insider_data(
         self,
-        tic: Optional[int] = None
+        tic: Optional[str] = None
     ) -> pl.DataFrame:
 
-        # connect to db and fetch data
         conn = self.db.get_connection()
-        df = fetch_data(conn, "insider", {"tic": tic} if tic else None)
-
-        if df.is_empty():
-            return df
-
-        # format dates
-        return df.with_columns([
-            pl.col('trade_date').str.to_date(format='%Y-%m-%d'),
-            pl.col('filling_date').str.to_date(format='%Y-%m-%d')
-        ])
+        df = fetch_data(conn, 'insider', {'tic': tic} if tic else None)
+        if df is None:
+            return pl.DataFrame()
+        df = convert_str_columns_to_date(df, ['filling_date', 'trade_date'])
+        return df
 
     def fetch_index_data(self) -> pl.DataFrame:
-        return fetch_data(self.db.get_connection(), "sp500")
+        conn = self.db.get_connection()
+        df = fetch_data(conn, 'sp500')
+        if df is None:
+            return pl.DataFrame()
+        df = convert_str_columns_to_date(df, ['date'])
+        return df
 
     def close(self):
         self.db.close()
+
+
+def convert_date_columns_to_str(df, cols, date_format="%Y-%m-%d") -> pl.DataFrame:
+    return df.with_columns([
+        df[col].dt.strftime(date_format)
+        for col in cols
+    ])
+
+
+def convert_str_columns_to_date(df, cols, date_format="%Y-%m-%d") -> pl.DataFrame:
+    return df.with_columns([
+        pl.col(col).str.to_date(format=date_format)
+        for col in cols
+    ])

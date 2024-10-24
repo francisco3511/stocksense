@@ -16,9 +16,11 @@ class DatabaseConnection:
         except Error as e:
             logger.error(f"Error connecting to database: {e}")
 
-    def get_connection(self):
+    def get_connection(self) -> sqlite3.Connection:
+        if self.connection is None:
+            raise ConnectionError("No database connection available.")
         return self.connection
 
-    def close(self):
+    def close(self) -> None:
         if self.connection:
             self.connection.close()

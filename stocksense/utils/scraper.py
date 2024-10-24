@@ -50,8 +50,6 @@ class Scraper:
     def _get_yfinance_handler(self):
         """
         Get yfinance stock ticker handler.
-
-        :return yf.Ticker: stock ticker handler
         """
         return yf.Ticker(self.tic, session=self.session)
 
@@ -59,15 +57,13 @@ class Scraper:
         """
         Scrape daily market data for a stock, until present.
         """
-        start = time.time()
         df = pl.from_pandas(self.handler.history(
             start=start_date,
             auto_adjust=False
         ).reset_index(drop=False))
-        end = time.time()
 
         if df.is_empty():
-            raise Exception("Empty DataFrame")
+            raise Exception("No market data available.")
 
         df = df.with_columns([
             pl.col('Date').dt.date().alias('date'),
@@ -77,7 +73,6 @@ class Scraper:
             pl.lit(self.tic).alias('tic')
         ])
         df = df.select(['date', 'close', 'adj_close', 'volume', 'tic'])
-        logger.info(f"scraping took {end - start:.2f} seconds")
         return df
 
     def _get_stock_info_yfinance(self) -> dict:
@@ -87,12 +82,10 @@ class Scraper:
         :raises Exception: no info available.
         :return dict: current stock info.
         """
-        start = time.time()
         data = self.handler.info
-        end = time.time()
 
         if not data:
-            raise Exception("Empty stock info.")
+            raise Exception("No status information data available.")
 
         fields = get_config("scraping")["yahoo_info"]
         record = dict.fromkeys(list(fields.values()), None)
@@ -102,7 +95,6 @@ class Scraper:
             if yh_key in data:
                 record[key] = data[yh_key]
 
-        logger.info(f"scraping took {end - start:.2f} seconds")
         return record
 
     def _get_fundamental_data_yfinance(
@@ -119,16 +111,12 @@ class Scraper:
         :raises Exception: no financial records are available.
         :return pl.DataFrame: financial report data from yfinance.
         """
-        start = time.time()
-
-        # fields to preserve
         fields_to_keep = get_config("scraping")["yahoo"]
 
-        # retrieve 3 main documents
+        # retrieve 3 main financial documents
         is_df = pl.from_pandas(self.handler.quarterly_income_stmt.T.reset_index())
         bs_df = pl.from_pandas(self.handler.quarterly_balance_sheet.T.reset_index())
         cf_df = pl.from_pandas(self.handler.quarterly_cashflow.T.reset_index())
-        end = time.time()
 
         # parse dates
         is_df = is_df.with_columns(
@@ -141,7 +129,6 @@ class Scraper:
             pl.col('index').dt.date().alias('index')
         ).sort('index')
 
-        # merge the data based on dates
         df = is_df.join_asof(
             bs_df,
             on='index',
@@ -154,23 +141,21 @@ class Scraper:
             tolerance=dt.timedelta(days=30)
         )
 
-        # validate columns and create placeholders
         for c in list(fields_to_keep.keys()):
             if c not in df.columns:
                 df = df.with_columns([
                     pl.lit(None).alias(c),
                 ])
 
-        # filter columns
         df = df.select(list(fields_to_keep.keys()))
         df = df.rename(fields_to_keep)
         df = df.filter(
-            (pl.col('datadate') >= start_date) &
-            (pl.col('datadate') < end_date)
+            (pl.col('datadate') > start_date) &
+            (pl.col('datadate') <= end_date)
         )
 
         if df.is_empty():
-            raise Exception("Empty financials")
+            raise Exception("No financial data available for date interval.")
 
         for c in df.columns[1:]:
             df = df.with_columns(
@@ -178,32 +163,23 @@ class Scraper:
             )
             df = df.with_columns((pl.col(c) / 1000000).round(3).alias(c))
 
-        # data corrections
         df = df.with_columns([
             (-pl.col('dvq')).alias('dvq'),
             (-pl.col('capxq')).alias('capxq')
         ])
         df = df.unique(subset=['datadate']).sort('datadate')
         df = df.with_columns(pl.lit(self.tic).alias('tic'))
-        logger.info(f"scraping took {end - start:.2f} seconds")
         return df
 
     def _get_earnings_dates_yfinance(self, start_date: dt.date, end_date: dt.date):
         """
         Scrape earnings dates and eps surprise.
-
-        :param dt.date start_date: starting date.
-        :param dt.date end_date: ending date.
-        :raises Exception: empty data.
-        :return pl.DataFrame: _description_
         """
         n_quarters = int((end_date - start_date).days / 90) + 20
 
-        start = time.time()
         df = pl.from_pandas(
             self.handler.get_earnings_dates(limit=n_quarters).reset_index()
         )
-        end = time.time()
 
         df = df.rename({
             "Earnings Date": "rdq",
@@ -213,24 +189,19 @@ class Scraper:
         # format dates and filter data
         df = df.select(['rdq', 'surprise_pct'])
         df = df.with_columns(pl.col('rdq').dt.date())
-        df = df.filter((pl.col('rdq') >= start_date) & (pl.col('rdq') < end_date))
+        df = df.filter((pl.col('rdq') >= start_date) & (pl.col('rdq') <= end_date))
         df = df.unique(subset=['rdq']).sort('rdq').drop_nulls(subset=['surprise_pct', 'rdq'])
 
         if df.is_empty():
-            raise Exception("Empty DataFrame")
+            raise Exception("No financial release date available for date interval.")
 
-        logger.info(f"scraping took {end - start:.2f} seconds")
         return df
 
     def get_market_data(self, start_date):
         """
         Scrape market data.
-
-        :raises Exception: scraping method not implemented.
-        :return _type_: scraped market data.
         """
         if self.source == "yfinance":
-            # scrape market data from yfinance
             return self._get_market_data_yfinance(start_date)
         else:
             raise Exception("Other methods not implemented")
@@ -238,9 +209,6 @@ class Scraper:
     def get_stock_info(self):
         """
         Scrape current stock info.
-
-        :raises Exception: scraping method not implemented.
-        :return _type_: scraped stock info.
         """
         if self.source == "yfinance":
             # scrape stock current info from yfinance
@@ -255,17 +223,9 @@ class Scraper:
     ) -> pl.DataFrame:
         """
         Scrape financial data.
-
-        :param dt.date start_date: starting date.
-        :param dt.date end_date: ending date.
-        :raises Exception: scraping method not implemented.
-        :return pl.DataFrame: financial data.
         """
         if self.source == "yfinance":
-            # scrape fundamental data from yfinance
             df = self._get_fundamental_data_yfinance(start_date, end_date)
-
-            # get earnings dates and estimates
             earn_dates = self._get_earnings_dates_yfinance(start_date, end_date)
 
             df = df.with_columns(pl.col('datadate').dt.date()).sort('datadate')
@@ -273,7 +233,6 @@ class Scraper:
         else:
             raise Exception("Other methods not implemented")
 
-        # merge data
         df = df.join_asof(
             earn_dates,
             left_on='datadate',
@@ -282,7 +241,7 @@ class Scraper:
             tolerance=dt.timedelta(days=80)
         )
 
-        # in cases where data is found but no release dt, defer to 2.5 months
+        # in cases where data is found but no release dt, defer 80 days later
         df = df.with_columns(
             pl.when(
                 pl.col('rdq').is_null()
@@ -297,11 +256,8 @@ class Scraper:
     def get_stock_insider_data(self) -> pl.DataFrame:
         """
         Scrape OpenInsider.com insider trading data for a given stock.
-
-        :raises ValueError: when scraping process fails.
-        :return pl.DataFrame: insider trading data table.
         """
-        # select fields to retrieve
+
         field_names = [
             'filling_date',
             'trade_date',
@@ -323,13 +279,7 @@ class Scraper:
         )
         try:
             data = []
-
-            # get insider trading data
-            start = time.time()
             response = requests.get(url)
-            end = time.time()
-
-            # process values
             soup = bs(response.text, 'html.parser')
             table = soup.find('table', {'class': 'tinytable'})
             if not table:
@@ -354,21 +304,17 @@ class Scraper:
                 ]
                 data.append(insider_data)
 
-            # data adjustments
             df = pl.DataFrame(data, schema=field_names, orient='row')
             df = df.with_columns(pl.lit(self.tic).alias('tic'))
 
             if df.is_empty():
                 raise Exception("No insider data available")
 
-            # format dates and sort
             df = df.with_columns([
                 pl.col('filling_date').str.to_datetime("%Y-%m-%d %H:%M:%S").dt.date(),
                 pl.col('trade_date').str.to_date("%Y-%m-%d")
             ])
             df = df.sort('filling_date')
-
-            logger.info(f"scraping took {end - start:.2f} seconds")
             return df
         except Exception as e:
             raise e
@@ -378,9 +324,7 @@ class Scraper:
         """
         List S&P500 stock info from wiki page and return Polars dataframe.
         """
-        start = time.time()
         resp = requests.get('http://en.wikipedia.org/wiki/List_of_S%26P_500_companies')
-        end = time.time()
         soup = bs(resp.text, 'lxml')
         table = soup.find('table', id='constituents')
 
@@ -396,7 +340,6 @@ class Scraper:
 
         df = pl.DataFrame(data)
         df = df.with_columns(pl.col('tic').str.replace(".", "-", literal=True))
-        logger.info(f"scraping took {end - start:.2f} seconds")
         return df
 
     @staticmethod

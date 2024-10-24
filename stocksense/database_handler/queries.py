@@ -89,7 +89,7 @@ def fetch_record(
             row = cursor.fetchone()
         if row:
             columns = [description[0] for description in cursor.description]
-            return pl.DataFrame([row], schema=columns, orient="row", infer_schema_length=None)
+            return pl.DataFrame([row], schema=columns, orient='row', infer_schema_length=None)
         else:
             return None
     except Error as e:
@@ -113,7 +113,10 @@ def fetch_data(
             cursor.execute(f'SELECT * FROM {table_name}')
         columns = [description[0] for description in cursor.description]
         data = cursor.fetchall()
-        return pl.DataFrame(data, schema=columns, orient="row", infer_schema_length=None)
+        if data:
+            return pl.DataFrame(data, schema=columns, orient='row', infer_schema_length=None)
+        else:
+            return None
     except Error as e:
         logger.error(f"Error fetching data from {table_name}: {e}")
         return None

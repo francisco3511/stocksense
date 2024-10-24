@@ -23,7 +23,8 @@ dependencies = [
     "xgboost",
     "scikit-learn",
     "plotly",
-    "nbformat>=4.2.0"
+    "nbformat>=4.2.0",
+    "watchdog"
 ]
 
 readme = "README.md"
@@ -37,5 +38,5 @@ build-backend = "setuptools.build_meta"
 where = ["stocksense"]
 
 [project.scripts]
-run-app = "stocksense.app:main"
+app = "app.home:main"
 run = "scripts.main:main"

@@ -1,28 +1,41 @@
+import os
+import subprocess
 import streamlit as st
 
-st.set_page_config(
-    page_title="StockSense",
-    page_icon="👋",
-)
 
-st.write("# Welcome to StockSense Analytics Platform 👋")
-
-st.sidebar.success("Select a service.")
-
-st.markdown(
+def run():
     """
-    Streamlit is an open-source app framework built specifically for
-    Machine Learning and Data Science projects.
-    **👈 Select a demo from the sidebar** to see some examples
-    of what Streamlit can do!
-    ### Want to learn more?
-    - Check out [streamlit.io](https://streamlit.io)
-    - Jump into our [documentation](https://docs.streamlit.io)
-    - Ask a question in our [community
-        forums](https://discuss.streamlit.io)
-    ### See more complex demos
-    - Use a neural net to [analyze the Udacity Self-driving Car Image
-        Dataset](https://github.com/streamlit/demo-self-driving)
-    - Explore a [New York City rideshare dataset]
+    Runs home script.
     """
-)
+
+    st.set_page_config(
+        layout="wide",
+        page_title="Stocksense Home",
+        page_icon="🏠",
+    )
+
+    st.sidebar.title("Stocksense App")
+    st.sidebar.success("Select page")
+
+    # Add pages links
+    st.sidebar.page_link("home.py", label="Home", icon="🏠")
+    st.sidebar.page_link("pages/explore.py", label="Explore Stock Data", icon="🌎")
+    st.sidebar.page_link("pages/analytics.py", label="Stock Analytics", icon="📈")
+    st.sidebar.page_link("pages/insights.py", label="Stock Picks", icon="🔮")
+    st.sidebar.divider()
+
+    st.markdown(
+        """
+        Welcome to Stocksense Analytics App.
+        """
+    )
+
+
+def main():
+    script_path = os.path.abspath(__file__)
+    command = ["streamlit", "run", script_path]
+    subprocess.run(command)
+
+
+if __name__ == "__main__":
+    run()
