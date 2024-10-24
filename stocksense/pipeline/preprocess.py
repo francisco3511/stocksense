@@ -52,9 +52,7 @@ class Preprocess():
 
         index_df = self.db.fetch_index_data()
         index_df = index_df.sort(by=['date'])
-        index_df = index_df.with_columns(
-            pl.col('date').str.strptime(pl.Date, format="%Y-%m-%d")
-        )
+
         # compute index past returns
         index_df = index_df.with_columns([
             pl.col('close').pct_change(MONTHLY_TRADING_DAYS).alias('index_mom'),
@@ -99,37 +97,22 @@ class Preprocess():
         """
         logger.info("START feature engineering")
 
-        # get financial data
+        # fetch data
         df = self.db.fetch_financial_data()
-
-        # fetch ALL other stock data from source tables
         info = self.db.fetch_stock()
         market_df = self.db.fetch_market_data().sort(['tic', 'date'])
         insider_df = self.db.fetch_insider_data()
 
-        # compute trade dates
+        # compute all features
         df = compute_trade_date(df)
-
-        # detect splits and adjust data
         df = adjust_shares(df)
-
-        # compute features
         df = compute_insider_trading_features(df, insider_df)
         df = compute_financial_ratios(df)
         df = compute_market_ratios(df, market_df, self.index_data)
         df = compute_growth_ratios(df)
         df = compute_performance_targets(df)
-
-        # add id info and select relevant features
         df = df.join(info.select(['tic', 'sector']), on='tic', how='left')
 
-        df = df.select(
-            ['datadate', 'rdq', 'tdq', 'tic', 'sector'] +
-            self.features +
-            self.targets
-        ).filter(
-            pl.col('tdq') <= pl.lit(dt.datetime.today().date())
-        )
         logger.success(f"{df.shape[1]} features PROCESSED")
         return df
 
@@ -139,14 +122,17 @@ class Preprocess():
         """
 
         df = self.data.clone()
-
+        df = df.select(
+            ['datadate', 'rdq', 'tdq', 'tic', 'sector'] +
+            self.features +
+            self.targets
+        )
+        df = df.filter(
+            pl.col('tdq') <= pl.lit(dt.datetime.today().date())
+        )
         growth_alias = ['qoq', 'yoy', '2y', 'return']
         growth_vars = [f for f in df.columns if any(xf in f for xf in growth_alias)]
-
-        # remove nans
         df = df.filter(~pl.all_horizontal(pl.col('ni_2y').is_null()))
-
-        # filter relevant sectors
         df = df.filter(pl.col('sector').is_in([
             'Health Care',
             'Financials',
@@ -162,12 +148,10 @@ class Preprocess():
         ]))
 
         for feature in [f for f in df.columns if any(xf in f for xf in growth_vars)]:
-            # clip values
             df = df.with_columns(
                 df.with_columns(pl.col(feature).clip(-30, 30))
             )
 
-        # remove inf values
         float_cols = df.select(pl.col(pl.Float64)).columns
         df = df.with_columns([
             pl.col(col)
@@ -176,15 +160,12 @@ class Preprocess():
             for col in float_cols
         ])
 
-        # adjust target returns to percentage
         df = df.with_columns([
             pl.col('freturn') * 100,
             pl.col('adj_freturn') * 100
         ])
 
-        # get sector dummies
         df = df.to_dummies(columns=['sector'])
-
         return df
 
     def save_data(self) -> None:
@@ -240,7 +221,6 @@ def map_to_closest_split_factor(approx_factor: float) -> float:
         2, 3, 4, 5, 6, 7,
         8, 9, 10, 15, 20, 30
     ])
-    # compute the absolute differences and find id with min difference
     diffs = np.abs(common_split_ratios - approx_factor)
     closest_index = np.argmin(diffs)
     return common_split_ratios[closest_index]

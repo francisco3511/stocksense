@@ -1,124 +1,221 @@
 
 import streamlit as st
-import pandas as pd
 import polars as pl
+import pandas as pd
+import datetime as dt
+from pathlib import Path
 
-# plotting
 import plotly.graph_objects as go
 import plotly.express as px
 from plotly.subplots import make_subplots
 
-from st_aggrid import GridOptionsBuilder, AgGrid
-from st_aggrid.shared import JsCode
-
-import talib as ta
-
 from database_handler import DatabaseHandler
 
-
+MILLION = 1000000
 MARGIN = dict(l=0, r=10, b=10, t=25)
-
-# JsCode to highlight cells when surprise < 0
-cellsytle_jscode = JsCode(
-    """
-    function(params) {
-        if (params.data.Surprise < 0) {
-            return {
-                'color': 'white',
-                'backgroundColor': '#A93226'
-            }
-        }
-    };
-    """
-)
-
-st.set_page_config(layout='wide', page_title='StockSense', page_icon='📈')
 
 
 def list_stocks():
+    db = DatabaseHandler()
+    stocks = db.fetch_stock().to_pandas()
+    return sorted(
+        stocks.loc[
+            stocks.spx_status == 1,  # noqa: E712
+            'tic'
+        ].values.tolist()
+    )
 
-    # read control file
-    stocks = DatabaseHandler().fetch_stock_info()
 
-    # return SP500 constituents
-    return stocks.loc[
-        stocks.spx_status == True,  # noqa: E712
-        'tic'
-    ].values.tolist()
-
-
-def date_breaks(df):
-    # build complete timeline from start date to end date
-    dt_all = pd.date_range(start=df.iloc[0]['Date'], end=df.iloc[-1]['Date'])
-    # retrieve the dates that are in the original datset
-    dt_obs = [d.strftime("%Y-%m-%d") for d in pd.to_datetime(df['Date'])]
-    # define dates with missing values
+def date_breaks(df, date_col='date'):
+    dt_all = pd.date_range(start=df[date_col].min(), end=df[date_col].max())
+    dt_obs = [d.strftime("%Y-%m-%d") for d in pd.to_datetime(df[date_col])]
     return [d for d in dt_all.strftime("%Y-%m-%d").tolist() if d not in dt_obs]
 
 
-def categorize_number(number):
-    if number < 0:
-        return "Negative"
-    elif number == 0:
-        return "Expected"
+@st.cache_data(show_spinner="Fetching index data...", max_entries=10)
+def load_index_data():
+    db = DatabaseHandler()
+    return db.fetch_index_data().to_pandas()
+
+
+@st.cache_data(show_spinner="Fetching processed data...", max_entries=1)
+def load_processed_data():
+    """
+    Read most recently processed dataset.
+    """
+
+    directory_path = Path("data/1_work_data/processed")
+    csv_files = directory_path.glob("*.csv")
+
+    date_files = [
+        (file, dt.datetime.strptime(file.stem.split('_')[-1], "%Y-%m-%d"))
+        for file in csv_files
+    ]
+    if date_files:
+        most_recent_file = max(date_files, key=lambda x: x[1])[0]
+        return pl.read_csv(most_recent_file, try_parse_dates=True).to_pandas()
     else:
-        return "Positive"
+        raise FileNotFoundError
 
 
 @st.cache_data(show_spinner="Fetching stock data...", max_entries=10)
-def load_stock_data(ticker, update=False):
-
-    if update:
-        # update stock data
-        handler = Etl([ticker])
-        handler.extract()
-
-    # get stock data handler
-    info = DatabaseHandler().fetch_stock_info(ticker)
-    metadata = DatabaseHandler().fetch_metadata(ticker)
-    mkt_df = DatabaseHandler().fetch_market_data(ticker)
-    fin_df = DatabaseHandler().fetch_financial_data(ticker)
-    index_df = DatabaseHandler().fetch_sp_data()
-
-    # calculate the MAs for graphs
-    mkt_df['SMA-50'] = ta.SMA(mkt_df['close'],timeperiod=50)
-    mkt_df['SMA-200'] = ta.SMA(mkt_df['close'], timeperiod=200)
-
-    return mkt_df, fin_df
+def load_stock_data(ticker):
+    db = DatabaseHandler()
+    stock = db.fetch_stock(ticker).to_pandas()
+    info = db.fetch_info(ticker).to_pandas()
+    market = db.fetch_market_data(ticker).to_pandas()
+    financials = db.fetch_financial_data(ticker).to_pandas()
+    insider = db.fetch_insider_data(ticker).to_pandas()
+    return stock, info, market, financials, insider
 
 
-def format_number(number):
+def display_stock_info(stock, info):
+    col1, col2 = st.columns([2, 1])
+    with col1:
+        st.subheader("**General Info**")
+        st.markdown(f"**Sector**: {stock.loc[0, 'sector']}")
+        st.markdown(f"**Last price**: {(info.loc[0, 'curr_price']):.2f} $")
+        st.markdown(f"**Market Cap**: {(info.loc[0, 'market_cap'] / MILLION):.2f} M$")
+        st.markdown(f"**Out. Shares**: {(info.loc[0, 'shares_outstanding'] / MILLION):.2f} M")
+        st.markdown(f"**Volume**: {(info.loc[0, 'volume'])} M$")
+        st.markdown(f"**Beta**: {(info.loc[0, 'beta']):.3f}")
+        st.markdown(f"**Enterprise Value**: {(info.loc[0, 'enterprise_value'] / MILLION):.2f} M$")
+        st.divider()
+        st.markdown(f"**Trailing PE**: {(info.loc[0, 'fiftytwo_wc']):.2f}")
+        st.markdown(f"**Forward PE**: {(info.loc[0, 'short_ratio']):.2f}")
+        st.markdown(f"**Forward EPS**: {(info.loc[0, 'forward_eps']):.2f}")
+        st.markdown(f"**Price-to-Book**: {(info.loc[0, 'price_book']):.2f}")
+    with col2:
+        st.subheader("**Analyst Information**")
+        st.markdown(f"**Risk**: {(info.loc[0, 'risk'])}")
+        st.markdown(f"**Target Low**: {(info.loc[0, 'target_low']):.2f} $")
+        st.markdown(f"**Target Mean**: {(info.loc[0, 'target_mean']):.2f} $")
+        st.markdown(f"**Target High**: {(info.loc[0, 'target_high']):.2f} $")
+        st.markdown(f"**Recommendation**: {(info.loc[0, 'rec_key'])}")
+
+
+def plot_market_data(df, index_df):
     """
-    Formats a number to display in Trillion(T), Billion(B) or Million(M)
+    Plots market data (price and volume).
+    Adds options to
     """
-    if abs(number) >= 1_000_000_000_000:
-        return f"{number / 1_000_000_000_000:.2f}T"
-    elif abs(number) >= 1_000_000_000:
-        return f"{number / 1_000_000_000:.2f}B"
-    elif abs(number) >= 1_000_000:
-        return f"{number / 1_000_000:.2f}M"
-    else:
-        return str(number)
 
+    col1, col2 = st.columns(2)
+    with col1:
+        adj_close = st.checkbox("Adjusted Close")
+    with col2:
+        show_sp = st.checkbox("S&P500")
 
-def plot_bubble_chart(data):
-    if data.empty:
-        print("No data available to plot.")
-        return
-
-    fig = px.scatter(
-        data,
-        x='Date',
-        y='Average Price',
-        size='Shares Traded',
-        hover_name='Insider Name',
-        hover_data=['Position', 'Total Amount', 'Shares Held'],
-        title='Insider Trading Data (Bubble Chart)',
-        labels={'Date': 'Transaction Date', 'Average Price': 'Average Price per Share'}
+    fig = make_subplots(
+        rows=2,
+        cols=1,
+        vertical_spacing=0.01,
+        shared_xaxes=True,
+        specs=[[{"secondary_y": True}], [{}]]
     )
 
-    fig.update_traces(marker=dict(line=dict(width=1, color='Black')))
-    fig.show()
+    fig.update_xaxes(rangebreaks=[dict(values=date_breaks(df))])
+    fig.add_trace(
+        go.Scatter(
+            x=df['date'],
+            y=df['adj_close' if adj_close else 'close'],
+            name='Price',
+            marker_color='orangered',
+            mode='lines'
+        ),
+        row=1,
+        col=1
+    )
+    if show_sp:
+        fig.add_trace(
+            go.Scatter(
+                x=index_df['date'],
+                y=index_df['adj_close' if adj_close else 'close'],
+                name='S&P500 Price',
+                marker_color='blue',
+                mode='lines'
+            ),
+            secondary_y=True,
+            row=1,
+            col=1
+        )
+
+    colors = [
+        '#27AE60' if dif >= 0 else '#B03A2E'
+        for dif in df['close'].diff().values.tolist()
+    ]
+
+    fig.add_trace(
+        go.Bar(x=df['date'], y=df['volume'], showlegend=False, marker_color=colors),
+        row=2,
+        col=1
+    )
+    title = (
+        "Daily Adjusted Close Price and Volume Data" if adj_close
+        else "Daily Close Price and Volume Data"
+    )
+    layout = go.Layout(title=title, height=500, margin=MARGIN)
+    fig.update_layout(
+        layout,
+        template='plotly_dark'
+    )
+    fig.update_xaxes(showgrid=False)
+    fig.update_yaxes(showgrid=False)
+    st.plotly_chart(fig, use_container_width=True, theme=None)
+
+
+def plot_financial_data(df):
+    """
+    Plots financials bar charts.
+    """
+    col = st.selectbox('Select', df.columns[3:], key='financial')
+    fig_fin = go.Figure()
+    fig_fin.add_trace(go.Bar(
+        x=df['rdq'],
+        y=df[col],
+        name=f"{col}",
+        marker_color='orangered'
+    ))
+    st.plotly_chart(fig_fin, use_container_width=True)
+
+
+def plot_insider_data(df):
+    """
+    Plots scatter plot for insider trading data.
+    """
+    df['qty'] = df['qty'].replace({r"\$": "", ",": ""}, regex=True).astype(float)
+    df['shares_held'] = df['shares_held'].replace({r"\$": "", ",": ""}, regex=True).astype(float)
+    df['value'] = df['value'].replace({r"\$": "", ",": ""}, regex=True).astype(float).abs()
+    df['last_price'] = df['last_price'].replace({r"\$": "", ",": ""}, regex=True).astype(float)
+
+    fig = px.scatter(
+        df,
+        x='filling_date',
+        y='value',
+        hover_name='owner_name',
+        hover_data=list(df.columns),
+        title='Insider Trading Data',
+        color='transaction_type',
+        labels={'filling_date': 'Filling Date', 'last_price': 'Last stock price'}
+    )
+    fig.update_layout(template='plotly')
+    fig.update_traces(marker={'size': 10})
+    st.plotly_chart(fig, use_container_width=True, theme=None)
+
+
+def plot_processed_data(df):
+    """
+    Plots processed feature set bar charts.
+    """
+    col = st.selectbox('Select', df.columns[15:], key='proc')
+    fig = go.Figure()
+    fig.add_trace(go.Bar(
+        x=df['tdq'],
+        y=df[col],
+        name=f"{col}",
+        marker_color='navy'
+    ))
+    st.plotly_chart(fig, use_container_width=True)
 
 
 def main():
@@ -126,14 +223,19 @@ def main():
     Main app script.
     """
 
-    # Set base configuration
     st.set_page_config(
         layout="wide",
-        page_title="Explore Stock Data",
-        icon="🌎"
+        page_title="Stock Data Analytics",
+        page_icon="📈"
     )
-    st.sidebar.markdown('#')
+    st.sidebar.title("Stocksense App")
+    st.sidebar.success("Select page")
 
+    st.sidebar.page_link("home.py", label="Home", icon="🏠")
+    st.sidebar.page_link("pages/overview.py", label="Market Overview", icon="🌎")
+    st.sidebar.page_link("pages/analytics.py", label="Stock Analytics", icon="📈")
+    st.sidebar.page_link("pages/insights.py", label="Stock Picks", icon="🔮")
+    st.sidebar.divider()
     st.sidebar.header("Options: ")
 
     ticker = st.sidebar.selectbox(
@@ -145,234 +247,62 @@ def main():
 
     selected_range = st.sidebar.select_slider(
         'Select period',
-        options=['1M', '6M', 'YTD', '1Y', 'All'],
-        value='1Y'
+        options=['1M', '6M', 'YTD', '1Y', '2Y', '5Y', 'All'],
+        value='2Y'
     )
 
-    update = st.sidebar.button("Fetch updates")
+    stock, info, market, financials, insider = load_stock_data(ticker)
+    processed = load_processed_data()
+    sp = load_index_data()
 
-    # retrieve market data
-    info, market_df, fin_df = load_stock_data(ticker, update)
+    name = stock.loc[0, :].values.flatten().tolist()[1]
+    min_date = market['date'].min()
+    max_date = market['date'].max()
 
-    name = info[0]
-    tic = info[1]
+    start_dates = {
+        '1M': max_date + pd.DateOffset(months=-1),
+        '6M': max_date + pd.DateOffset(months=-6),
+        'YTD': max_date.replace(month=1, day=1),
+        '1Y': max_date + pd.DateOffset(months=-12),
+        '2Y': max_date + pd.DateOffset(months=-24),
+        '5Y': max_date + pd.DateOffset(months=-60),
+        'All': min_date
+    }
 
-    fin_df['Category'] = fin_df['surprise_pct'].apply(categorize_number)
+    st.session_state.tic = ticker
+    st.session_state.page_subheader = f"{name} ({ticker})"
 
-    min_date = market_df.iloc[0]['Date']
-    max_date = market_df.iloc[-1]['Date']
-
-    start_m1 = max_date + pd.DateOffset(months=-1)
-    start_m6 = max_date + pd.DateOffset(months=-6)
-    start_ytd = max_date.replace(month=1, day=1)
-    start_y1 = max_date + pd.DateOffset(months=-12)
-    start_all = min_date
-    end_date = max_date
-
-    start_date = start_all
-
-    match selected_range:
-        case '1M':
-            start_date = start_m1
-        case '6M':
-            start_date = start_m6
-        case 'YTD':
-            start_date = start_ytd
-        case '1Y' :
-            start_date = start_y1
-
-    # subheader with company name and symbol
-    st.session_state.page_subheader = f'{name} ({tic})'
     st.subheader(st.session_state.page_subheader)
-    st.divider()
+    st.markdown(f"**Last update**: {stock.loc[0, 'last_update']}")
 
-    tab1, tab2, tab3 = st.tabs(["Market", "Financials", "Stocksensing"])
-
-    # market tab
+    tab1, tab2, tab3, tab4, tab5 = st.tabs([
+        "Status", "Market", "Financials", "Insider Trading", "Feature Analysis"]
+    )
     with tab1:
-
-        # filter dates
-        mdf = market_df[(market_df['date'] >= start_date) & (market_df['date'] <= end_date)]
-
-        col1, col2, col3, col4 = st.columns([1,1,1,4.5])
-        with col1:
-            st.text('Sector')
-            #st.text(info['industry'])
-            st.divider()
-            st.text('Market Cap')
-            #st.text(format_number(info['marketCap']))
-            st.divider()
-            st.text('Previous Close')
-            #st.text(info['previousClose'])
-            st.divider()
-            st.text('Beta')
-            #st.text('{:.2f}'.format(info['beta']))
-        with col2:
-            st.text('Average Volume')
-            #st.text('{:,}'.format(info['averageVolume']))
-            st.divider()
-            st.text('Fwd Div & Yield')
-            if 'dividendRate' in info:
-                st.text('{0} ({1:.2f})%'.format(info['dividendRate'], info['dividendYield'] * 100))
-            else:
-                st.text('NA')
-            st.divider()
-
-        with col3:
-            st.text('EPS (TTM)')
-            st.text(info['trailingEps'])
-            st.divider()
-            st.text('PEG Ratio (TTM)')
-            if 'trailingPegRatio' in info:
-                st.text(f'{0:.2f}'.format(info['trailingPegRatio']))
-            else:
-                st.text('NA')
-            st.divider()
-            st.text('PE Ratio (TTM)')
-            if 'trailingPE' in info:
-                st.text('{0:.2f}'.format(info['trailingPE']))
-            else:
-                st.text('NA')
-            st.divider()
-            st.text('Forward PE Ratio')
-            if 'forwardPE' in info:
-                st.text('{0:.2f}'.format(info['forwardPE']))
-            else:
-                st.text('NA')
-
-        with col4:
-
-            # Construct a 2 x 1 Plotly figure
-            fig = make_subplots(rows=2, cols=1, vertical_spacing=0.01, shared_xaxes=True)
-
-            # Remove dates without values
-            fig.update_xaxes(rangebreaks=[dict(values=date_breaks(mdf))])
-
-            # Plot the Price chart
-            fig.add_trace(
-                go.Scatter(
-                    x=mdf['date'],
-                    y=mdf['adj_close'],
-                    name='Price',
-                    marker_color='orangered',
-                    mode='lines'
-                ),
-                row=1,
-                col=1
-            )
-
-            # Color maps for different MAs
-            COLORS_MAPPER = {
-                'SMA-50': '#38BEC9',
-                'SMA-200': '#E67E22',
-            }
-
-            for ma, col in COLORS_MAPPER.items():
-                fig.add_trace(go.Scatter(x=mdf['Date'], y=mdf[ma], name=ma, marker_color=col))
-
-            # colors for the Bar chart
-            colors = [
-                '#27AE60' if dif >= 0 else '#B03A2E'
-                for dif in mdf['Close'].diff().values.tolist()
-            ]
-
-            # add volume bar chart
-            fig.add_trace(
-                go.Bar(x=mdf['date'], y=mdf['volume'], showlegend=False, marker_color=colors),
-                row=2,
-                col=1
-            )
-
-            # add title
-            layout = go.Layout(title='Price, MA and Volume', height=500, margin=MARGIN)
-
-            fig.update_layout(layout)
-            st.plotly_chart(fig, theme='streamlit', use_container_width=True)
-
+        display_stock_info(stock, info)
     with tab2:
-
-        # filter dates
-        fdf = fin_df[(fin_df['datadate'] >= start_date) & (fin_df['datadate'] <= end_date)]
-
-        # set up tabs
-        earn_tab, eps_tab = st.tabs(["Earnings", "EPS"])
-
-        with eps_tab:
-
-            gb = GridOptionsBuilder()
-            # Pagination is set to 10 rows per page
-            gb.configure_pagination(paginationAutoPageSize=False, paginationPageSize=10)
-            # Apply the jscode to display the row in red for negative EPS
-            gb.configure_default_column(cellStyle=cellsytle_jscode)
-
-            gb.configure_column(
-                field="datadate",
-                valueFormatter="value != undefined ? new Date(value).toLocaleString('en-AU', {dateStyle:'medium'}): ''",
-                width=125
-            )
-            gb.configure_column(
-                field="rdq",
-                valueFormatter="value != undefined ? new Date(value).toLocaleString('en-AU', {dateStyle:'medium'}): ''",
-                width=125
-            )
-            gb.configure_column(
-                field="eps_rep",
-                type=["numericColumn"],
-                width=120
-            )
-            gb.configure_column(
-                field="eps_est",
-                type=["numericColumn"],
-                width=125
-            )
-
-            gb.configure_column(
-                field="surprise_pct",
-                valueFormatter="value + '%'",
-                width=147
-            )
-            gridOptions = gb.build()
-
-            col1, col2 = st.columns([3, 1])
-            with col1:
-                AgGrid(
-                    fdf[::-1],
-                    gridOptions=gridOptions, theme="balham",
-                    #columns_auto_size_mode=ColumnsAutoSizeMode.FIT_ALL_COLUMNS_TO_VIEW,
-                    allow_unsafe_jscode=True)
-            with col2:
-                st.write("")
-
-            fig = go.Figure()
-            fig.add_trace(go.Scatter(
-                x=fdf["rdq"], y=fdf["eps_rep"],
-                name="Reported EPS",
-                marker_color="#A93226"
-            ))
-
-            fig.add_trace(go.Scatter(
-                x=fdf["rdq"], y=fdf["eps_est"],
-                name="Estimated EPS",
-                marker_color="#F5B7B1"
-            ))
-
-            # Set options common to all traces with fig.update_traces
-            fig.update_traces(mode="markers", marker_line_width=2, marker_size=10)
-            fig.update_layout(title="Reported/Estimated EPS", margin=MARGIN, legend=dict(orientation="h"))
-            st.plotly_chart(fig, theme="streamlit", use_container_width=True)
-
-            # Normlaize suprise column as it contains negative values
-            # norm = ((df['Surprise'] - df['Surprise'].min()) / (df['Surprise'].max() - df['Surprise'].min())) * 100
-
-            fig = px.scatter(fdf, x="rdq", y="eps_rep", color="Category",
-                            color_discrete_map = {'Negative': "#A93226", 'Expected': "#7FB3D5", 'Positive': "#1E8449"})
-            fig.update_traces(marker_size=10)
-            fig.update_layout(title="Reported EPS (Categorized)", xaxis_title=None, legend_title=None, yaxis_title=None,
-                            margin=MARGIN, legend=dict(orientation="h"))
-            st.plotly_chart(fig, theme='streamlit', use_container_width=True)
-
+        mdf = market[(market['date'] >= start_dates[selected_range]) & (market['date'] <= max_date)]
+        idf = sp[(sp['date'] >= start_dates[selected_range]) & (sp['date'] <= max_date)]
+        plot_market_data(mdf, idf)
     with tab3:
-        pass
+        fdf = financials.loc[
+            (financials['rdq'] >= start_dates[selected_range]) &
+            (financials['rdq'] <= max_date)
+        ]
+        plot_financial_data(fdf)
+    with tab4:
+        indf = insider.loc[
+            (insider['filling_date'] >= start_dates[selected_range]) &
+            (insider['filling_date'] <= max_date)
+        ]
+        plot_insider_data(indf)
+    with tab5:
+        pdf = processed.loc[
+            (processed['tic'] == ticker) &
+            (processed['tdq'] >= start_dates[selected_range]) &
+            (processed['tdq'] <= max_date)
+        ]
+        plot_processed_data(pdf)
 
 
 if __name__ == "__main__":

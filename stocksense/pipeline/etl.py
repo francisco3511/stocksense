@@ -207,12 +207,14 @@ class ETL:
             Success status.
         """
         try:
+            end_date = dt.datetime.now().date()
             info = scraper.get_stock_info()
             self.db.insert_info(info)
-            logger.info(f'{tic}: updated stock info')
+            self.db.update_stock(tic, {'last_update': end_date})
+            logger.info(f"{tic}: updated stock info")
             return True
         except Exception:
-            logger.warning(f"{tic}: info extraction FAILED")
+            logger.error(f"{tic}: info extraction FAILED")
             return False
 
     def extract_fundamental_data(self, tic: str, scraper: Scraper, last_update: dt.date) -> bool:
@@ -239,29 +241,28 @@ class ETL:
             fin_data = self.db.fetch_financial_data(tic)
             if fin_data.is_empty():
                 raise Exception(f"{scraper.tic}: no financial data available")
-            start_dt = fin_data['datadate'].max()
+            start_date = fin_data['datadate'].max()
         except Exception:
             # no past data available for stock
             fin_data = pl.DataFrame(schema=self.db_fields["financial"])
-            start_dt = dt.datetime.strptime(self.base_date, '%Y-%m-%d').date()
+            start_date = dt.datetime.strptime(self.base_date, '%Y-%m-%d').date()
             logger.warning(f'{tic}: no past financial data found ({last_update})')
 
         try:
-            end_dt = dt.datetime.now().date()
-            if (end_dt - start_dt) < dt.timedelta(days=80):
+            end_date = dt.datetime.now().date()
+            if (end_date - start_date) < dt.timedelta(days=80):
                 logger.warning(f'{tic}: earnings season not reached ({last_update})')
                 return False
 
             data = scraper.get_financial_data(
-                start_dt,
-                end_dt
+                start_date,
+                end_date
             )
             self.db.insert_financial_data(
                 data[self.db_fields["financial"]]
             )
-            self.db.update_stock(tic, {'last_update': end_dt})
-
-            logger.success(f'{tic}: updated financial data ({start_dt}:{end_dt})')
+            self.db.update_stock(tic, {'last_update': end_date})
+            logger.success(f'{tic}: updated financial data ({start_date}:{end_date})')
             return True
         except Exception as e:
             logger.error(f"{tic}: financial data extraction FAILED ({e})")
@@ -299,6 +300,7 @@ class ETL:
             self.db.insert_market_data(
                 data[self.db_fields["market"]]
             )
+            self.db.update_stock(tic, {'last_update': end_date})
             logger.success(f"{tic}: updated market data ({end_date})")
             return True
         except Exception as e:

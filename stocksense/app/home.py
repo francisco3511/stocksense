@@ -13,20 +13,18 @@ def run():
         page_title="Stocksense Home",
         page_icon="🏠",
     )
-
     st.sidebar.title("Stocksense App")
     st.sidebar.success("Select page")
 
-    # Add pages links
     st.sidebar.page_link("home.py", label="Home", icon="🏠")
-    st.sidebar.page_link("pages/explore.py", label="Explore Stock Data", icon="🌎")
+    st.sidebar.page_link("pages/overview.py", label="Market Overview", icon="🌎")
     st.sidebar.page_link("pages/analytics.py", label="Stock Analytics", icon="📈")
     st.sidebar.page_link("pages/insights.py", label="Stock Picks", icon="🔮")
     st.sidebar.divider()
 
-    st.markdown(
+    st.header(
         """
-        Welcome to Stocksense Analytics App.
+        Welcome to Stocksense Analytics App!
         """
     )
 
