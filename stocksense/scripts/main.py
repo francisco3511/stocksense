@@ -27,17 +27,14 @@ def main(update, preprocess, train_model):
     )
 
     if update:
-        # ETL process
         etl_handler = ETL()
         etl_handler.update_index_listings()
         etl_handler.extract()
     if preprocess:
-        # data preprocessing
         proc = Preprocess()
         proc.run()
         proc.save_data()
     if train_model:
-        # train model
         model_handler = ModelHandler()
         model_handler.train()
         model_handler.score()

@@ -1,9 +1,6 @@
 
 import streamlit as st
-import polars as pl
 import pandas as pd
-import datetime as dt
-from pathlib import Path
 
 import plotly.graph_objects as go
 import plotly.express as px
@@ -62,7 +59,7 @@ def main():
     st.sidebar.page_link("pages/insights.py", label="Stock Picks", icon="🔮")
     st.sidebar.divider()
 
-    stock, info = load_data()
+    #  stock, info = load_data()
 
 
 if __name__ == "__main__":

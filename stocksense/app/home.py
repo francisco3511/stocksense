@@ -21,7 +21,6 @@ def run():
     st.sidebar.page_link("pages/analytics.py", label="Stock Analytics", icon="📈")
     st.sidebar.page_link("pages/insights.py", label="Stock Picks", icon="🔮")
     st.sidebar.divider()
-
     st.header(
         """
         Welcome to Stocksense Analytics App!

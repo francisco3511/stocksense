@@ -38,19 +38,33 @@ class ETL:
         """
         logger.info("setting default S&P500 stock tickers")
         stock_data = self.db.fetch_stock()
+        if stock_data.is_empty():
+            self.set_index_listings()
         return stock_data.filter(pl.col('spx_status') == 1)['tic'].to_list()
+
+    def set_index_listings(self) -> None:
+        """
+        Set index stock control table.
+        """
+        df = Scraper.scrape_sp500_stock_info()
+        parsed_date = dt.datetime.strptime(
+            self.base_date,
+            '%Y-%m-%d'
+        ).date()
+        stock_df = df.with_columns([
+            pl.lit(parsed_date).alias('last_update'),
+            pl.lit(1).alias('spx_status'),
+            pl.lit(1).alias('active')
+        ])
+        self.db.insert_stock(stock_df[self.db_fields["stock"]])
 
     def update_index_listings(self) -> None:
         """
         Update the S&P500 index constituents in the database.
         """
-
         logger.info("updating S&P500 index listings")
 
-        # read main stock control table
         stock_df = self.db.fetch_stock()
-
-        # extract active sp500 stocks/sectors
         active_df = Scraper.scrape_sp500_stock_info()
 
         self._update_delisted_symbols(stock_df, active_df)
@@ -67,7 +81,6 @@ class ETL:
         active_df : pl.DataFrame
             current sp500 stocks and sectors.
         """
-
         last_constituents = stock_df.filter(pl.col('spx_status') == 1)['tic'].to_list()
         constituents = active_df['tic'].to_list()
 
@@ -82,9 +95,9 @@ class ETL:
         Parameters
         ----------
         stock_df : pl.DataFrame
-            stock control table.
+            Stock control table.
         active_df : pl.DataFrame
-            current sp500 stocks and sectors.
+            Current sp500 stocks and sectors.
         """
         hist_constituents = stock_df['tic'].to_list()
         last_constituents = stock_df.filter(pl.col('spx_status') == 1)['tic'].to_list()
@@ -104,6 +117,7 @@ class ETL:
                     pl.lit(1).alias('active')
                 ])
                 self.db.insert_stock(stock[self.db_fields["stock"]])
+
             logger.info(f"added {tic} to S&P500 index")
 
     def is_empty(self):
@@ -118,7 +132,7 @@ class ETL:
         """
         logger.info("START stock data extraction process")
         if self.is_empty():
-            raise ValueError("no stocks assigned for ETL process.")
+            raise ValueError("No stocks assigned for ETL process.")
         self.extract_sp_500()
         self._extract_all_stocks()
 
@@ -149,20 +163,22 @@ class ETL:
 
     def _extract_stock_data(self, tic: str) -> bool:
         """
-        Extract updated data for a single stock, including
-        market, financial and insider trading data.
+        Extract updated data for a single stock, including market, financial and
+        insider trading data. If no financial data is found for the last 2 years,
+        flags stock as delisted.
+
 
         Parameters
         ----------
         tic : str
-            ticker of stock to update.
+            Ticker of stock to update.
 
         Returns
         -------
         bool
-            sucess status
+            Sucess status
         """
-        logger.opt(ansi=True).info(f"<red>START {tic}</red> stock data extraction")
+        logger.info(f"START {tic} stock data extraction")
 
         try:
             stock = self.db.fetch_stock(tic).row(0, named=True)
@@ -173,19 +189,12 @@ class ETL:
 
         scraper = Scraper(tic, self.fin_source)
         if not self.extract_fundamental_data(tic, scraper, last_update):
-            # if no data found and no data for past 2yrs, flag as inactive
             if last_update.year < dt.datetime .now().year - 2:
                 self.db.update_stock(tic, {'active': 0})
                 logger.info(f"{tic}: flagged as inactive")
                 return False
 
-        if not self.extract_info(tic, scraper):
-            # if no info found and no data for past yr, flag as inactive
-            if last_update.year < dt.datetime.now().year - 1:
-                self.db.update_stock(tic, {'active': 0})
-                logger.info(f"{tic}: flagged as inactive")
-            return False
-
+        self.extract_info(tic, scraper)
         self.extract_market_data(tic, scraper)
         self.extract_insider_data(tic, scraper)
         return True
