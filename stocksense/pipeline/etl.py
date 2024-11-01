@@ -24,7 +24,7 @@ class ETL:
         self.db_fields = get_config("db")["schema"]
         self.base_date = get_config("scraping")["base_date"]
         self.fin_source = "yfinance"
-        self.historical_data_path = Path('data/1_work_data/')
+        self.historical_data_path = Path("data/1_work_data/")
         self.stocks = stocks or self._set_default_stocks()
 
     def _set_default_stocks(self) -> list[str]:
@@ -216,10 +216,9 @@ class ETL:
             Success status.
         """
         try:
-            end_date = dt.datetime.now().date()
             info = scraper.get_stock_info()
             self.db.insert_info(info)
-            self.db.update_stock(tic, {'last_update': end_date})
+            self.db.update_stock(tic, {'last_update': dt.datetime.now().date()})
             logger.info(f"{tic}: updated stock info")
             return True
         except Exception:

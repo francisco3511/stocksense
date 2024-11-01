@@ -51,6 +51,9 @@ class Preprocess():
         logger.info("START processing S&P500 index data")
 
         index_df = self.db.fetch_index_data()
+        if index_df.is_empty():
+            raise ValueError("Empty index data received")
+
         index_df = index_df.sort(by=['date'])
 
         # compute index past returns
@@ -587,6 +590,7 @@ def compute_market_ratios(
     # compute volatility features
     market_df = compute_daily_volatility_features(market_df)
 
+    df = df.sort(by=['rdq', 'tic'])
     df = df.join_asof(
         market_df.drop(['volume']),
         left_on='tdq',
@@ -595,7 +599,14 @@ def compute_market_ratios(
         strategy='backward',
         tolerance=dt.timedelta(days=7)
     )
-    df = df.sort(by=['tdq', 'tic'])
+    df = df.join_asof(
+        market_df.select(['date', 'tic', 'close']).rename({'close': 'rdq_price'}),
+        left_on='rdq',
+        right_on='date',
+        by='tic',
+        strategy='backward',
+        tolerance=dt.timedelta(days=7)
+    )
     df = df.join_asof(
         index_df,
         left_on='tdq',

@@ -1,4 +1,3 @@
-
 import streamlit as st
 import polars as pl
 import pandas as pd
@@ -10,6 +9,8 @@ import plotly.express as px
 from plotly.subplots import make_subplots
 
 from database_handler import DatabaseHandler
+
+pd.options.mode.chained_assignment = None  # default='warn'
 
 MILLION = 1000000
 MARGIN = dict(l=0, r=10, b=10, t=25)
@@ -119,7 +120,7 @@ def plot_market_data(df, index_df):
         go.Scatter(
             x=df['date'],
             y=df['adj_close' if adj_close else 'close'],
-            name='Price',
+            name='Stock Price',
             marker_color='orangered',
             mode='lines'
         ),
@@ -132,7 +133,7 @@ def plot_market_data(df, index_df):
                 x=index_df['date'],
                 y=index_df['adj_close' if adj_close else 'close'],
                 name='S&P500 Price',
-                marker_color='blue',
+                marker_color='green',
                 mode='lines'
             ),
             secondary_y=True,
@@ -159,7 +160,6 @@ def plot_market_data(df, index_df):
         layout,
         template='plotly_dark'
     )
-    fig.update_xaxes(showgrid=False)
     fig.update_yaxes(showgrid=False)
     st.plotly_chart(fig, use_container_width=True, theme=None)
 
@@ -169,24 +169,63 @@ def plot_financial_data(df):
     Plots financials bar charts.
     """
     col = st.selectbox('Select', df.columns[3:], key='financial')
-    fig_fin = go.Figure()
-    fig_fin.add_trace(go.Bar(
+    fig = go.Figure()
+    fig.add_trace(go.Bar(
         x=df['rdq'],
         y=df[col],
         name=f"{col}",
         marker_color='orangered'
     ))
-    st.plotly_chart(fig_fin, use_container_width=True)
+    fig.update_layout(template='plotly_dark')
+    st.plotly_chart(fig, use_container_width=True, theme=None)
+
+
+def plot_financial_analysis(df):
+    """
+    Creates a comprehensive financial dashboard with multiple visualization types:
+    - Main metrics trends (Revenue, Net Income, EPS)
+    - Growth rates
+    - Margins analysis
+    - Custom metric selector
+    """
+
+    growth_alias = ['qoq', 'yoy', '2y', 'return']
+    growth_vars = [f for f in df.columns if any(xf in f for xf in growth_alias)]
+    for col in growth_vars:
+        if col in df.columns:
+            df[col] = df[col] * 100
+
+    ratio_vars = [col for col in df.columns[15:]]
+    margins = st.multiselect(
+        "Select metric",
+        ratio_vars,
+        ['roa', 'gpm', 'dr'],
+    )
+    fig = go.Figure()
+    for margin in margins:
+        fig.add_trace(
+            go.Scatter(
+                x=df['rdq'],
+                y=df[margin],
+                name=margin.replace('_', ' ').title(),
+                mode='lines+markers'
+            )
+        )
+    fig.update_layout(
+        height=400,
+        template='plotly_dark',
+        title_text="Financial Metric Overview",
+        margin=dict(l=10, r=10, t=30, b=10)
+    )
+    st.plotly_chart(fig, use_container_width=True, theme=None)
 
 
 def plot_insider_data(df):
     """
     Plots scatter plot for insider trading data.
     """
-    df['qty'] = df['qty'].replace({r"\$": "", ",": ""}, regex=True).astype(float)
-    df['shares_held'] = df['shares_held'].replace({r"\$": "", ",": ""}, regex=True).astype(float)
+
     df['value'] = df['value'].replace({r"\$": "", ",": ""}, regex=True).astype(float).abs()
-    df['last_price'] = df['last_price'].replace({r"\$": "", ",": ""}, regex=True).astype(float)
 
     fig = px.scatter(
         df,
@@ -198,7 +237,7 @@ def plot_insider_data(df):
         color='transaction_type',
         labels={'filling_date': 'Filling Date', 'last_price': 'Last stock price'}
     )
-    fig.update_layout(template='plotly')
+    fig.update_layout(template='plotly_dark')
     fig.update_traces(marker={'size': 10})
     st.plotly_chart(fig, use_container_width=True, theme=None)
 
@@ -213,7 +252,7 @@ def plot_processed_data(df):
         x=df['tdq'],
         y=df[col],
         name=f"{col}",
-        marker_color='navy'
+        marker_color='orangered'
     ))
     st.plotly_chart(fig, use_container_width=True)
 
@@ -302,7 +341,7 @@ def main():
             (processed['tdq'] >= start_dates[selected_range]) &
             (processed['tdq'] <= max_date)
         ]
-        plot_processed_data(pdf)
+        plot_financial_analysis(pdf)
 
 
 if __name__ == "__main__":
