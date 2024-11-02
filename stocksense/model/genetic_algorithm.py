@@ -27,11 +27,11 @@ class GeneticAlgorithm:
         self.init_range_low = init_range_low
         self.init_range_high = init_range_high
         self.gene_space = gene_space
-        self.random_seed = get_config('model')['seed']
         self.ga_instance = None
         self.no_improvement_count = 0
         self.best_fitness_value = 0
         self.no_improvement_limit = 5
+        self.random_seed = get_config('model')['seed']
 
     def create_instance(self):
         logger.info("creating GA instance")
@@ -51,7 +51,7 @@ class GeneticAlgorithm:
             mutation_type="random",
             crossover_type="single_point",
             on_generation=self.on_generation,
-            parallel_processing=["thread", 4]
+            parallel_processing=-1
         )
 
     def on_generation(self, ga_instance):
@@ -64,7 +64,6 @@ class GeneticAlgorithm:
         logger.info(f"\tbest solution: {best_solution}")
         logger.info(f"\tbest fitness: {best_solution_fitness}")
 
-        # check if there is improvement
         if best_solution_fitness > self.best_fitness_value:
             self.best_fitness_value = best_solution_fitness
             self.no_improvement_count = 0
@@ -146,7 +145,6 @@ def fitness_function_wrapper(
     scale
 ):
     def fitness_function(ga_instance, solution, solution_idx):
-        # hyperparameters from GA solution
         params = {
             'objective': 'binary:logistic',
             'learning_rate': solution[0],
@@ -164,24 +162,17 @@ def fitness_function_wrapper(
             'seed': get_config('model')['seed']
         }
 
-        # init XGBoost model with GA solution parameters
         model = XGBoostModel(params)
-
-        # expanding-window evaluation loop
         perfs = []
         window = train_window
         while start_year + window + val_window < dt.datetime.now().year - 1:
-            # split folds
             train, val = get_train_val_split(data, start_year, window, val_window)
             X_train = train.select(pl.exclude([tic_col, target_col, date_col])).to_pandas()
             y_train = train.select(target_col).to_pandas().values.ravel()
             X_val = val.select(pl.exclude([tic_col, target_col, date_col])).to_pandas()
             y_val = val.select(target_col).to_pandas().values.ravel()
 
-            # train on training set
             model.train(X_train, y_train)
-
-            # evaluate performance on validation setw
             perf = model.evaluate(X_val, y_val)['pr_auc']
             perfs.append(perf)
             window += 1

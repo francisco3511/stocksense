@@ -430,6 +430,60 @@ def compute_financial_ratios(df: pl.DataFrame) -> pl.DataFrame:
     return df
 
 
+def compute_market_ratios(
+    df: pl.DataFrame,
+    market_df: pl.DataFrame,
+    index_df: pl.DataFrame
+) -> pl.DataFrame:
+    """
+    Compute market-related ratios.
+
+    Parameters
+    ----------
+    df : pl.DataFrame
+        Financial data of a given stock.
+    market_df : pl.DataFrame
+        Market data.
+    index_df : pl.DataFrame
+        Index price data.
+
+    Returns
+    -------
+    pl.DataFrame
+        Main dataset with added ratios.
+    """
+
+    market_df = compute_daily_momentum_features(market_df)
+    market_df = compute_daily_volatility_features(market_df)
+
+    df = df.sort(by=['rdq', 'tic'])
+    df = df.join_asof(
+        market_df.drop(['volume']),
+        left_on='tdq',
+        right_on='date',
+        by='tic',
+        strategy='backward',
+        tolerance=dt.timedelta(days=7)
+    ).join_asof(
+        market_df.select(['date', 'tic', 'close']).rename({'close': 'rdq_close'}),
+        left_on='rdq',
+        right_on='date',
+        by='tic',
+        strategy='forward',
+        tolerance=dt.timedelta(days=7)
+    ).join_asof(
+        index_df,
+        left_on='tdq',
+        right_on='index_date',
+        strategy='backward',
+        tolerance=dt.timedelta(days=7)
+    )
+    df = df.sort(by=['tic', 'tdq'])
+
+    df = compute_hybrid_features(df)
+    return df
+
+
 def compute_daily_momentum_features(df: pl.DataFrame) -> pl.DataFrame:
     """
     Compute daily price momentum features.
@@ -496,6 +550,7 @@ def compute_hybrid_features(df: pl.DataFrame) -> pl.DataFrame:
         Dataset with market/financial ratios.
     """
     return df.with_columns([
+        ((pl.col('close') - pl.col('rdq_close')) / pl.col('rdq_close') * 100).alias('earn_drift'),
         (pl.col('price_mom') / pl.col('index_mom')).alias('momentum_mom'),
         (pl.col('price_qoq') / pl.col('index_qoq')).alias('momentum_qoq'),
         (pl.col('price_yoy') / pl.col('index_yoy')).alias('momentum_yoy'),
@@ -557,68 +612,8 @@ def compute_performance_targets(df: pl.DataFrame) -> pl.DataFrame:
         pl.col('fperf_2q') +
         pl.col('fperf_3q') +
         pl.col('fperf_4q')
-        ) > 0).cast(pl.Int8).alias('fperf')
+    ) > 0).cast(pl.Int8).alias('fperf')
     )
-    return df
-
-
-def compute_market_ratios(
-    df: pl.DataFrame,
-    market_df: pl.DataFrame,
-    index_df: pl.DataFrame
-) -> pl.DataFrame:
-    """
-    Compute market-related ratios.
-
-    Parameters
-    ----------
-    df : pl.DataFrame
-        Financial data of a given stock.
-    market_df : pl.DataFrame
-        Market data.
-    index_df : pl.DataFrame
-        Index price data.
-
-    Returns
-    -------
-    pl.DataFrame
-        Main dataset with added ratios.
-    """
-    # compute momentum and price features
-    market_df = compute_daily_momentum_features(market_df)
-
-    # compute volatility features
-    market_df = compute_daily_volatility_features(market_df)
-
-    df = df.sort(by=['rdq', 'tic'])
-    df = df.join_asof(
-        market_df.drop(['volume']),
-        left_on='tdq',
-        right_on='date',
-        by='tic',
-        strategy='backward',
-        tolerance=dt.timedelta(days=7)
-    )
-    df = df.join_asof(
-        market_df.select(['date', 'tic', 'close']).rename({'close': 'rdq_price'}),
-        left_on='rdq',
-        right_on='date',
-        by='tic',
-        strategy='backward',
-        tolerance=dt.timedelta(days=7)
-    )
-    df = df.join_asof(
-        index_df,
-        left_on='tdq',
-        right_on='index_date',
-        strategy='backward',
-        tolerance=dt.timedelta(days=7)
-    )
-    df = df.sort(by=['tic', 'tdq'])
-
-    # compute hybrid features
-    df = compute_hybrid_features(df)
-
     return df
 
 
@@ -637,10 +632,14 @@ def compute_growth_ratios(df: pl.DataFrame) -> pl.DataFrame:
         Data with additional columns.
     """
     df = df.lazy().with_columns([
-        ((pl.col('niq') - pl.col('niq').shift(4)) / pl.col('niq').shift(4).abs()).over('tic')
-        .alias('ni_yoy'),
-        ((pl.col('niq') - pl.col('niq').shift(8)) / pl.col('niq').shift(8).abs()).over('tic')
-        .alias('ni_2y'),
+        (
+            (pl.col('niq') - pl.col('niq').shift(4)).sign() *
+            (pl.col('niq') - pl.col('niq').shift(4)) / pl.col('niq').shift(4).abs()
+        ).over('tic').alias('ni_yoy'),
+        (
+            (pl.col('niq') - pl.col('niq').shift(8)).sign() *
+            (pl.col('niq') - pl.col('niq').shift(8)) / pl.col('niq').shift(8).abs()
+        ).over('tic').alias('ni_2y'),
         ((pl.col('saleq') - pl.col('saleq').shift(4)) / pl.col('saleq').shift(4).abs()).over('tic')
         .alias('saleq_yoy'),
         ((pl.col('saleq') - pl.col('saleq').shift(8)) / pl.col('saleq').shift(8).abs()).over('tic')

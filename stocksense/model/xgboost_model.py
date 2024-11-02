@@ -10,7 +10,7 @@ class XGBoostModel:
         self.params = params if params else {
             'objective': 'binary:logistic',
             'learning_rate': 0.1,
-            'n_estimators': 50,
+            'n_estimators': 100,
             'max_depth': 3,
             'min_child_weight': 1,
             'gamma': 0,

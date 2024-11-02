@@ -24,7 +24,9 @@ dependencies = [
     "scikit-learn",
     "plotly",
     "nbformat>=4.2.0",
-    "watchdog"
+    "watchdog",
+    "ipykernel",
+    "shap"
 ]
 
 readme = "README.md"
