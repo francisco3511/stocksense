@@ -4,7 +4,6 @@ import datetime as dt
 import polars_talib as plta
 from loguru import logger
 
-from config import get_config
 from database_handler import DatabaseHandler
 
 BIWEEKLY_TRADING_DAYS = 10
@@ -17,27 +16,27 @@ PREDICTION_HORIZON = 4
 OVER_PERFORMACE_THRES = 0.1
 PERFORMACE_THRES = 0.4
 
-# TODO: add logging and exception handling
-
 
 class Preprocess():
     """
     Stock data processing pipeline handler.
     """
 
-    def __init__(self):
+    def __init__(self, features: list, targets: list):
         self.db = DatabaseHandler()
-        self.features = get_config('model')['features']
-        self.targets = get_config('model')['targets']
+        self.features = features
+        self.targets = targets
+        self.index_data = self._process_index_data()
 
     def run(self):
         """
         Runs main data processing pipeline.
         """
         logger.info("START processing stock data")
-        self.index_data = self._process_index_data()
-        self.data = self._feature_engineering()
-        self.data = self._clean_data()
+        data = self._feature_engineering()
+        data = self._clean_data(data)
+        logger.info("END processing stock data")
+        return data
 
     def _process_index_data(self) -> pl.DataFrame:
         """
@@ -119,13 +118,22 @@ class Preprocess():
         logger.success(f"{df.shape[1]} features PROCESSED")
         return df
 
-    def _clean_data(self):
+    def _clean_data(self, data: pl.DataFrame) -> pl.DataFrame:
         """
-        Apply training dataset cleaning and processing transformations.
+        Clean and process financial features dataset.
+
+        Parameters
+        ----------
+        data : pl.DataFrame
+            Financial features dataset.
+
+        Returns
+        -------
+        pl.DataFrame
+            Filtered and processed data.
         """
 
-        df = self.data.clone()
-        df = df.select(
+        df = data.select(
             ['datadate', 'rdq', 'tdq', 'tic', 'sector'] +
             self.features +
             self.targets
@@ -171,13 +179,18 @@ class Preprocess():
         df = df.to_dummies(columns=['sector'])
         return df
 
-    def save_data(self) -> None:
+    def save_data(self, data: pl.DataFrame) -> None:
         """
         Saves processed data locally.
+
+        Parameters
+        ----------
+        data : pl.DataFrame
+            Filtered and processed data.
         """
         today = dt.datetime.today().date()
-        file_name = f"data/1_work_data/processed/proc_{today}.csv"
-        self.data.write_csv(file_name)
+        file_name = f"data/processed/proc_{today}.csv"
+        data.write_csv(file_name)
 
 
 def generate_quarter_dates(start_year: int, end_year: int) -> list:
@@ -311,7 +324,7 @@ def compute_insider_purchases(
         right_on=['tic']
     ).filter(
         (pl.col('filling_date') < pl.col('tdq')) &
-        (pl.col('filling_date') >= pl.col('tdq').dt.offset_by('-3mo'))
+        (pl.col('filling_date') >= pl.col('tdq').dt.offset_by('-12mo'))
     )
     df_agg_lazy = df_filtered_lazy.group_by(['tic', 'tdq']).agg([
         pl.col('filling_date').count().alias('n_purch'),
@@ -347,7 +360,7 @@ def compute_insider_sales(
         right_on=['tic']
     ).filter(
         (pl.col('filling_date') < pl.col('tdq')) &
-        (pl.col('filling_date') >= pl.col('tdq').dt.offset_by('-3mo'))
+        (pl.col('filling_date') >= pl.col('tdq').dt.offset_by('-12mo'))
     )
 
     df_agg_lazy = df_filtered_lazy.group_by(['tic', 'tdq']).agg([
@@ -617,102 +630,114 @@ def compute_performance_targets(df: pl.DataFrame) -> pl.DataFrame:
     return df
 
 
+def _compute_growth_rate(col: str, periods: int, suffix: str) -> pl.Expr:
+    """
+    Compute growth rate for a given column over specified periods.
+
+    Parameters
+    ----------
+    col : str
+        Column name to compute growth for
+    periods : int
+        Number of periods to shift (e.g., 1 for QoQ, 4 for YoY)
+    suffix : str
+        Suffix for the output column name (e.g., 'qoq', 'yoy')
+
+    Returns
+    -------
+    pl.Expr
+        Polars expression for the growth calculation
+    """
+    return (
+        (pl.col(col) - pl.col(col).shift(periods)) /
+        pl.col(col).shift(periods).abs()
+    ).over('tic').alias(f'{col}_{suffix}')
+
+
+def _compute_signed_growth_rate(col: str, periods: int, suffix: str) -> pl.Expr:
+    """
+    Compute signed growth rate for columns that can be negative.
+
+    Parameters
+    ----------
+    col : str
+        Column name to compute growth for
+    periods : int
+        Number of periods to shift
+    suffix : str
+        Suffix for the output column name
+
+    Returns
+    -------
+    pl.Expr
+        Polars expression for the signed growth calculation
+    """
+    return (
+        (pl.col(col) - pl.col(col).shift(periods)).sign() *
+        (pl.col(col) - pl.col(col).shift(periods)) /
+        pl.col(col).shift(periods).abs()
+    ).over('tic').alias(f'{col}_{suffix}')
+
+
 def compute_growth_ratios(df: pl.DataFrame) -> pl.DataFrame:
     """
-    Compute rolling growth statistics.
+    Compute rolling growth statistics for financial metrics.
 
     Parameters
     ----------
     df : pl.DataFrame
-        Financial data for a given stock.
+        Financial data of a given stock.
 
     Returns
     -------
     pl.DataFrame
-        Data with additional columns.
+        Data with additional growth ratio columns.
     """
-    df = df.lazy().with_columns([
-        (
-            (pl.col('niq') - pl.col('niq').shift(4)).sign() *
-            (pl.col('niq') - pl.col('niq').shift(4)) / pl.col('niq').shift(4).abs()
-        ).over('tic').alias('ni_yoy'),
-        (
-            (pl.col('niq') - pl.col('niq').shift(8)).sign() *
-            (pl.col('niq') - pl.col('niq').shift(8)) / pl.col('niq').shift(8).abs()
-        ).over('tic').alias('ni_2y'),
-        ((pl.col('saleq') - pl.col('saleq').shift(4)) / pl.col('saleq').shift(4).abs()).over('tic')
-        .alias('saleq_yoy'),
-        ((pl.col('saleq') - pl.col('saleq').shift(8)) / pl.col('saleq').shift(8).abs()).over('tic')
-        .alias('saleq_2y'),
-        ((pl.col('ltq') - pl.col('ltq').shift(1)) / pl.col('ltq').shift(1).abs()).over('tic')
-        .alias('ltq_qoq'),
-        ((pl.col('ltq') - pl.col('ltq').shift(4)) / pl.col('ltq').shift(4).abs()).over('tic')
-        .alias('ltq_yoy'),
-        ((pl.col('ltq') - pl.col('ltq').shift(8)) / pl.col('ltq').shift(8).abs()).over('tic')
-        .alias('ltq_2y'),
-        ((pl.col('dlttq') - pl.col('dlttq').shift(4)) / pl.col('dlttq').shift(4).abs()).over('tic')
-        .alias('dlttq_yoy'),
-        ((pl.col('gpm') - pl.col('gpm').shift(1)) / pl.col('gpm').shift(1).abs()).over('tic')
-        .alias('gpm_qoq'),
-        ((pl.col('gpm') - pl.col('gpm').shift(4)) / pl.col('gpm').shift(4).abs()).over('tic')
-        .alias('gpm_yoy'),
-        ((pl.col('roa') - pl.col('roa').shift(1)) / pl.col('roa').shift(1).abs()).over('tic')
-        .alias('roa_qoq'),
-        ((pl.col('roa') - pl.col('roa').shift(4)) / pl.col('roa').shift(4).abs()).over('tic')
-        .alias('roa_yoy'),
-        ((pl.col('roe') - pl.col('roe').shift(1)) / pl.col('roe').shift(1).abs()).over('tic')
-        .alias('roe_qoq'),
-        ((pl.col('roe') - pl.col('roe').shift(4)) / pl.col('roe').shift(4).abs()).over('tic')
-        .alias('roe_yoy'),
-        ((pl.col('fcf') - pl.col('fcf').shift(1)) / pl.col('fcf').shift(1).abs()).over('tic')
-        .alias('fcf_qoq'),
-        ((pl.col('fcf') - pl.col('fcf').shift(4)) / pl.col('fcf').shift(4).abs()).over('tic')
-        .alias('fcf_yoy'),
-        ((pl.col('cr') - pl.col('cr').shift(1)) / pl.col('cr').shift(1).abs()).over('tic')
-        .alias('cr_qoq'),
-        ((pl.col('cr') - pl.col('cr').shift(4)) / pl.col('cr').shift(4).abs()).over('tic')
-        .alias('cr_yoy'),
-        ((pl.col('qr') - pl.col('qr').shift(1)) / pl.col('qr').shift(1).abs()).over('tic')
-        .alias('qr_qoq'),
-        ((pl.col('qr') - pl.col('qr').shift(4)) / pl.col('qr').shift(4).abs()).over('tic')
-        .alias('qr_yoy'),
-        ((pl.col('der') - pl.col('der').shift(1)) / pl.col('der').shift(1).abs()).over('tic')
-        .alias('der_qoq'),
-        ((pl.col('der') - pl.col('der').shift(4)) / pl.col('der').shift(4).abs()).over('tic')
-        .alias('der_yoy'),
-        ((pl.col('dr') - pl.col('dr').shift(1)) / pl.col('dr').shift(1).abs()).over('tic')
-        .alias('dr_qoq'),
-        ((pl.col('dr') - pl.col('dr').shift(4)) / pl.col('dr').shift(4).abs()).over('tic')
-        .alias('dr_yoy'),
-        ((pl.col('ltda') - pl.col('ltda').shift(4)) / pl.col('ltda').shift(4).abs()).over('tic')
-        .alias('ltda_yoy'),
-        ((pl.col('pe') - pl.col('pe').shift(1)) / pl.col('pe').shift(1).abs()).over('tic')
-        .alias('pe_qoq'),
-        ((pl.col('pe') - pl.col('pe').shift(4)) / pl.col('pe').shift(4).abs()).over('tic')
-        .alias('pe_yoy'),
-        ((pl.col('pb') - pl.col('pb').shift(1)) / pl.col('pb').shift(1).abs()).over('tic')
-        .alias('pb_qoq'),
-        ((pl.col('pb') - pl.col('pb').shift(4)) / pl.col('pb').shift(4).abs()).over('tic')
-        .alias('pb_yoy'),
-        ((pl.col('ps') - pl.col('ps').shift(1)) / pl.col('ps').shift(1).abs()).over('tic')
-        .alias('ps_qoq'),
-        ((pl.col('ps') - pl.col('ps').shift(4)) / pl.col('ps').shift(4).abs()).over('tic')
-        .alias('ps_yoy'),
-        ((pl.col('eps') - pl.col('eps').shift(1)) / pl.col('eps').shift(1).abs()).over('tic')
-        .alias('eps_qoq'),
-        ((pl.col('eps') - pl.col('eps').shift(4)) / pl.col('eps').shift(4).abs()).over('tic')
-        .alias('eps_yoy'),
-        ((pl.col('ev_ebitda') - pl.col('ev_ebitda').shift(1)) / pl.col('ev_ebitda').shift(1).abs())
-        .over('tic').alias('ev_eb_qoq'),
-        ((pl.col('ev_ebitda') - pl.col('ev_ebitda').shift(4)) / pl.col('ev_ebitda').shift(4).abs())
-        .over('tic').alias('ev_eb_yoy'),
-        ((pl.col('ltcr') - pl.col('ltcr').shift(4)) / pl.col('ltcr').shift(4).abs())
-        .over('tic').alias('ltcr_yoy'),
-        ((pl.col('itr') - pl.col('itr').shift(4)) / pl.col('itr').shift(4).abs())
-        .over('tic').alias('itr_yoy'),
-        ((pl.col('rtr') - pl.col('rtr').shift(4)) / pl.col('rtr').shift(4).abs())
-        .over('tic').alias('rtr_yoy'),
-        ((pl.col('atr') - pl.col('atr').shift(4)) / pl.col('atr').shift(4).abs())
-        .over('tic').alias('atr_yoy')
-    ]).collect()
-    return df
+
+    QUARTER = 1
+    YEAR = 4
+    TWO_YEAR = 8
+
+    signed_metrics = {
+        'niq': [YEAR, TWO_YEAR]  # Can have negative values
+    }
+
+    standard_metrics = {
+        'saleq': [YEAR, TWO_YEAR],
+        'ltq': [QUARTER, YEAR, TWO_YEAR],
+        'dlttq': [YEAR],
+        'gpm': [QUARTER, YEAR],
+        'roa': [QUARTER, YEAR],
+        'roe': [QUARTER, YEAR],
+        'fcf': [QUARTER, YEAR],
+        'cr': [QUARTER, YEAR],
+        'qr': [QUARTER, YEAR],
+        'der': [QUARTER, YEAR],
+        'dr': [QUARTER, YEAR],
+        'ltda': [YEAR],
+        'pe': [QUARTER, YEAR],
+        'pb': [QUARTER, YEAR],
+        'ps': [QUARTER, YEAR],
+        'eps': [QUARTER, YEAR],
+        'ev_ebitda': [QUARTER, YEAR],
+        'ltcr': [YEAR],
+        'itr': [YEAR],
+        'rtr': [YEAR],
+        'atr': [YEAR]
+    }
+
+    expressions = []
+
+    # add signed growth calculations
+    for metric, periods in signed_metrics.items():
+        for period in periods:
+            suffix = 'qoq' if period == QUARTER else 'yoy' if period == YEAR else '2y'
+            expressions.append(_compute_signed_growth_rate(metric, period, suffix))
+
+    # add standard growth calculations
+    for metric, periods in standard_metrics.items():
+        for period in periods:
+            suffix = 'qoq' if period == QUARTER else 'yoy' if period == YEAR else '2y'
+            expressions.append(_compute_growth_rate(metric, period, suffix))
+
+    return df.lazy().with_columns(expressions).collect()

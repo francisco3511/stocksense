@@ -21,9 +21,9 @@ class ETL:
 
     def __init__(self, stocks: Optional[list[str]] = []):
         self.db = DatabaseHandler()
-        self.db_fields = get_config("db")["schema"]
-        self.base_date = get_config("scraping")["base_date"]
-        self.fin_source = "yfinance"
+        self.db_fields = get_config('db')['schema']
+        self.base_date = get_config('scraping')['base_date']
+        self.fin_source = 'yfinance'
         self.historical_data_path = Path("data/1_work_data/")
         self.stocks = stocks or self._set_default_stocks()
 

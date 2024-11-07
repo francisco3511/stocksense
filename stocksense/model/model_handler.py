@@ -26,15 +26,24 @@ class ModelHandler:
         self.val_window = 2
         self.model_path = Path("models/")
 
-    def train(self):
+    def train(self, data: pl.DataFrame):
         """
-        Train and optimize models.
+        Train and optimize GA-XGBoost model.
+
+        Parameters
+        ----------
+        data : pl.DataFrame
+            Preprocessed financial data.
+
+        Raises
+        ------
+        Exception
+            If window size overflows.
         """
         try:
             if self.train_start + self.train_window + self.val_window > dt.datetime.now().year - 1:
                 raise Exception("Window size overflow")
 
-            data = load_processed_data()
             trade_date = find_last_trading_date()
 
             logger.info(f"START training model - {trade_date}")
