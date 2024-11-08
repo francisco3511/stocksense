@@ -1,5 +1,7 @@
 # Stock Classifier and Analytics
 
+[![CI](https://github.com/francisco3511/stocksense/actions/workflows/ci.yml/badge.svg)](https://github.com/francisco3511/stocksense/actions/workflows/ci.yml)
+
 This project is a **machine learning stock classifier** that selects stocks based on quarterly financial and market data. The model aims to predict whether a stock will outperform the S&P 500 index over a one-year horizon. The project also includes a **Streamlit app** for stock analytics, where users can visualize stock metrics, growth ratios, and model predictions.
 
 ## Table of Contents
@@ -35,6 +37,6 @@ The stock classifier is trained using financial ratios and growth features deriv
    ```
 
 2.	Install dependencies using pyproject.toml:
-    ```bash
+   ```bash
    pip install .
    ```
