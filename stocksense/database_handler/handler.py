@@ -12,7 +12,6 @@ from database_handler import (
     update_data,
     delete_data,
     count_data,
-    fetch_record,
     fetch_data
 )
 

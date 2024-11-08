@@ -4,8 +4,9 @@ import polars as pl
 from pathlib import Path
 from loguru import logger
 
-from model import XGBoostModel, GeneticAlgorithm, fitness_function_wrapper
 from config import get_config
+from .xgboost_model import XGBoostModel
+from .genetic_algorithm import GeneticAlgorithm, fitness_function_wrapper
 
 
 warnings.filterwarnings("ignore")

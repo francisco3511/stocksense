@@ -143,7 +143,7 @@ class Preprocess():
         )
         growth_alias = ['qoq', 'yoy', '2y', 'return']
         growth_vars = [f for f in df.columns if any(xf in f for xf in growth_alias)]
-        df = df.filter(~pl.all_horizontal(pl.col('ni_2y').is_null()))
+        df = df.filter(~pl.all_horizontal(pl.col('niq_2y').is_null()))
         df = df.filter(pl.col('sector').is_in([
             'Health Care',
             'Financials',

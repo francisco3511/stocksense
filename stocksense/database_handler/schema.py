@@ -113,5 +113,6 @@ def create_tables(connection: Connection | None) -> None:
         for table_name, table_schema in tables.items():
             cursor.execute(table_schema)
         connection.commit()
+        logger.success("Tables created successfully")
     except Error as e:
         logger.error(f"Error creating tables: {e}")

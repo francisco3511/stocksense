@@ -26,7 +26,8 @@ dependencies = [
     "nbformat>=4.2.0",
     "watchdog",
     "ipykernel",
-    "shap"
+    "shap",
+    "ruff"
 ]
 
 readme = "README.md"
@@ -40,5 +41,5 @@ build-backend = "setuptools.build_meta"
 where = ["stocksense"]
 
 [project.scripts]
-app = "app.home:main"
-run = "scripts.main:main"
+stocksense-app = "app.home:main"
+stocksense = "main:main"

@@ -30,17 +30,11 @@ The stock classifier is trained using financial ratios and growth features deriv
 
 1. Clone the repository:
    ```bash
-   git clone https://github.com/your-repo/stock-classifier-analytics.git
-   cd stock-classifier-analytics
+   git clone https://github.com/your-user/stocksense.git
+   cd stocksense
    ```
 
 2.	Install dependencies using pyproject.toml:
     ```bash
-   git clone https://github.com/your-repo/stock-classifier-analytics.git
-   cd stock-classifier-analytics
+   pip install .
    ```
-
-3.	Set Up Database:
-    ```bash
-    Ensure the data is available in the local SQLite database (data/stock_data.db). Data can be processed and inserted using scripts in the data/processing/ directory.
-    ```
