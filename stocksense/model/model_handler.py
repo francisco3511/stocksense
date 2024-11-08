@@ -19,9 +19,9 @@ class ModelHandler:
     """
 
     def __init__(self):
-        self.tic_col = 'tic'
-        self.date_col = 'tdq'
-        self.target_col = 'fperf'
+        self.tic_col = "tic"
+        self.date_col = "tdq"
+        self.target_col = "fperf"
         self.train_start = 2007
         self.train_window = 12
         self.val_window = 2
@@ -42,7 +42,10 @@ class ModelHandler:
             If window size overflows.
         """
         try:
-            if self.train_start + self.train_window + self.val_window > dt.datetime.now().year - 1:
+            if (
+                self.train_start + self.train_window + self.val_window
+                > dt.datetime.now().year - 1
+            ):
                 raise Exception("Window size overflow")
 
             trade_date = find_last_trading_date()
@@ -52,29 +55,40 @@ class ModelHandler:
             self.model_path.mkdir(parents=True, exist_ok=True)
 
             train_df = data.filter(
-                (pl.col('tdq') < trade_date) &
-                ~pl.all_horizontal(pl.col(self.target_col).is_null())
+                (pl.col("tdq") < trade_date)
+                & ~pl.all_horizontal(pl.col(self.target_col).is_null())
             )
 
             # get imbalance approx scale
             scale = int(
-                len(train_df.filter(
-                    (pl.col(self.target_col) == 0) &
-                    (pl.col('tdq').dt.year() >= self.train_start) &
-                    (pl.col('tdq').dt.year() < self.train_start + self.train_window)
-                )) /
-                len(train_df.filter(
-                    (pl.col(self.target_col) == 1) &
-                    (pl.col('tdq').dt.year() >= self.train_start) &
-                    (pl.col('tdq').dt.year() < self.train_start + self.train_window)
-                ))
+                len(
+                    train_df.filter(
+                        (pl.col(self.target_col) == 0)
+                        & (pl.col("tdq").dt.year() >= self.train_start)
+                        & (
+                            pl.col("tdq").dt.year()
+                            < self.train_start + self.train_window
+                        )
+                    )
+                )
+                / len(
+                    train_df.filter(
+                        (pl.col(self.target_col) == 1)
+                        & (pl.col("tdq").dt.year() >= self.train_start)
+                        & (
+                            pl.col("tdq").dt.year()
+                            < self.train_start + self.train_window
+                        )
+                    )
+                )
             )
 
-            aux_cols = (
-                ['datadate', 'rdq', 'sector'] +
-                [t for t in get_config('model')['targets'] if t != self.target_col]
+            aux_cols = ["datadate", "rdq", "sector"] + [
+                t for t in get_config("model")["targets"] if t != self.target_col
+            ]
+            train_df = train_df.select(
+                [c for c in train_df.columns if c not in aux_cols]
             )
-            train_df = train_df.select([c for c in train_df.columns if c not in aux_cols])
 
             ga = GeneticAlgorithm(
                 num_generations=50,
@@ -89,21 +103,21 @@ class ModelHandler:
                     self.train_start,
                     self.train_window,
                     self.val_window,
-                    scale
+                    scale,
                 ),
                 init_range_low=[0.001, 50, 2, 1, 0, 0.5, 0.5, 0, 0],
                 init_range_high=[0.5, 500, 12, 10, 10, 1, 1, 12, 12],
                 gene_space=[
-                    {'low': 0.001, 'high': 0.5},
-                    {'low': 50, 'high': 500},
-                    {'low': 2, 'high': 12},
-                    {'low': 1, 'high': 10},
-                    {'low': 0, 'high': 10},
-                    {'low': 0.5, 'high': 1},
-                    {'low': 0.5, 'high': 1},
-                    {'low': 0, 'high': 12},
-                    {'low': 0, 'high': 12}
-                ]
+                    {"low": 0.001, "high": 0.5},
+                    {"low": 50, "high": 500},
+                    {"low": 2, "high": 12},
+                    {"low": 1, "high": 10},
+                    {"low": 0, "high": 10},
+                    {"low": 0.5, "high": 1},
+                    {"low": 0.5, "high": 1},
+                    {"low": 0, "high": 12},
+                    {"low": 0, "high": 12},
+                ],
             )
 
             ga.create_instance()
@@ -111,20 +125,20 @@ class ModelHandler:
             best_solution, best_solution_fitness, best_solution_idx = ga.best_solution()
 
             params = {
-                'objective': 'binary:logistic',
-                'learning_rate': best_solution[0],
-                'n_estimators': int(best_solution[1]),
-                'max_depth': int(best_solution[2]),
-                'min_child_weight': best_solution[3],
-                'gamma': best_solution[4],
-                'subsample': best_solution[5],
-                'colsample_bytree': best_solution[6],
-                'reg_alpha': best_solution[7],
-                'reg_lambda': best_solution[8],
-                'scale_pos_weight': scale,
-                'eval_metric': 'logloss',
-                'nthread': -1,
-                'seed': get_config('model')['seed']
+                "objective": "binary:logistic",
+                "learning_rate": best_solution[0],
+                "n_estimators": int(best_solution[1]),
+                "max_depth": int(best_solution[2]),
+                "min_child_weight": best_solution[3],
+                "gamma": best_solution[4],
+                "subsample": best_solution[5],
+                "colsample_bytree": best_solution[6],
+                "reg_alpha": best_solution[7],
+                "reg_lambda": best_solution[8],
+                "scale_pos_weight": scale,
+                "eval_metric": "logloss",
+                "nthread": -1,
+                "seed": get_config("model")["seed"],
             }
 
             X_train = train_df.select(
@@ -149,16 +163,20 @@ class ModelHandler:
 
             logger.info(f"START stocksense eval - {trade_date}")
 
-            test_df = data.filter((pl.col('tdq') == trade_date))
-            test_df = test_df.filter(~pl.all_horizontal(pl.col(self.target_col).is_null()))
+            test_df = data.filter((pl.col("tdq") == trade_date))
+            test_df = test_df.filter(
+                ~pl.all_horizontal(pl.col(self.target_col).is_null())
+            )
 
-            aux_cols = ['datadate', 'rdq', 'tic', 'sector', 'freturn', 'adj_freturn']
+            aux_cols = ["datadate", "rdq", "tic", "sector", "freturn", "adj_freturn"]
             test_df = test_df.select([c for c in test_df.columns if c not in aux_cols])
             test_df = test_df.select(
                 pl.exclude([self.target_col, self.date_col])
             ).to_pandas()
 
-            model_path = model_path = Path("models/") / f"xgb_{self.last_trade_date}.pkl"
+            model_path = model_path = (
+                Path("models/") / f"xgb_{self.last_trade_date}.pkl"
+            )
             model = XGBoostModel().load_model(model_path)
             model.predict_proba(test_df)
         except Exception:
@@ -187,7 +205,7 @@ def find_most_recent(file_dir: Path, format: str = "csv"):
     """
     files = file_dir.glob(f"*.{format}")
     date_files = [
-        (file, dt.datetime.strptime(file.stem.split('_')[-1], "%Y-%m-%d"))
+        (file, dt.datetime.strptime(file.stem.split("_")[-1], "%Y-%m-%d"))
         for file in files
     ]
     if date_files:

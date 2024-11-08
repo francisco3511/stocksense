@@ -1,4 +1,3 @@
-
 import streamlit as st
 import numpy as np
 import pandas as pd
@@ -6,7 +5,7 @@ import plotly.express as px
 
 from database_handler import DatabaseHandler
 
-pd.set_option('future.no_silent_downcasting', True)
+pd.set_option("future.no_silent_downcasting", True)
 
 
 @st.cache_data(show_spinner="Fetching data...", max_entries=3)
@@ -24,18 +23,17 @@ def load_sp500_data():
     stocks = stocks.loc[stocks.spx_status == 1]
 
     info = db.fetch_info().to_pandas()
-    stock_df = stocks.merge(info, how='left', on='tic')
+    stock_df = stocks.merge(info, how="left", on="tic")
 
     financials = db.fetch_financial_data().to_pandas()
-    financials['rdq'] = pd.to_datetime(financials['rdq'])
+    financials["rdq"] = pd.to_datetime(financials["rdq"])
     financials = (
-        financials
-        .sort_values('rdq', ascending=False)
-        .groupby('tic')
+        financials.sort_values("rdq", ascending=False)
+        .groupby("tic")
         .first()
         .reset_index()
     )
-    stock_df = stock_df.merge(financials, how='left', on='tic')
+    stock_df = stock_df.merge(financials, how="left", on="tic")
     return stock_df
 
 
@@ -48,12 +46,12 @@ def plot_sector_distribution(data):
     data : pd.DataFrame
         Processed S&P 500 data.
     """
-    sector_counts = data['sector'].value_counts()
+    sector_counts = data["sector"].value_counts()
     fig = px.pie(
         values=sector_counts.values,
         names=sector_counts.index,
         title="S&P 500 Sector Distribution",
-        template='plotly_dark'
+        template="plotly_dark",
     )
     st.plotly_chart(fig, use_container_width=True)
 
@@ -67,31 +65,21 @@ def show_recent_earnings(data):
     data : pd.DataFrame
         Processed S&P 500 data.
     """
-    df = data.sort_values('rdq', ascending=False).head(10)
-    df = df[['tic', 'rdq', 'sector', 'curr_price', 'saleq', 'surprise_pct']]
+    df = data.sort_values("rdq", ascending=False).head(10)
+    df = df[["tic", "rdq", "sector", "curr_price", "saleq", "surprise_pct"]]
     st.dataframe(
         df,
         column_config={
             "tic": "Stock",
-            "rdq": st.column_config.DateColumn(
-                "Earnings Date",
-                format="YYYY-MM-DD"
-            ),
+            "rdq": st.column_config.DateColumn("Earnings Date", format="YYYY-MM-DD"),
             "sector": "Sector",
             "curr_price": st.column_config.NumberColumn(
-                "Current Price",
-                format="$%.2f"
+                "Current Price", format="$%.2f"
             ),
-            "saleq": st.column_config.NumberColumn(
-                "Sales",
-                format="$%.2f"
-            ),
-            "surprise_pct": st.column_config.NumberColumn(
-                "Surprise %",
-                format="$%.2f"
-            ),
+            "saleq": st.column_config.NumberColumn("Sales", format="$%.2f"),
+            "surprise_pct": st.column_config.NumberColumn("Surprise %", format="$%.2f"),
         },
-        hide_index=True
+        hide_index=True,
     )
 
 
@@ -105,19 +93,19 @@ def show_market_summary(data):
         Processed S&P 500 data.
     """
 
-    data['trailing_pe'] = data['trailing_pe'].astype(float)
+    data["trailing_pe"] = data["trailing_pe"].astype(float)
     data.replace([np.inf, -np.inf], np.nan, inplace=True)
-    total_market_cap = data['market_cap'].sum() / 1e12
-    avg_pe = data['trailing_pe'].mean(skipna=True)
+    total_market_cap = data["market_cap"].sum() / 1e12
+    avg_pe = data["trailing_pe"].mean(skipna=True)
     avg_target_upside = (
-        (data['target_mean'] - data['curr_price']) / data['curr_price']
+        (data["target_mean"] - data["curr_price"]) / data["curr_price"]
     ).mean() * 100
 
     summary = {
         "Total Companies": len(data),
         "Total Market Cap": f"${total_market_cap:.2f}T",
         "Average P/E": f"{avg_pe:.2f}",
-        "Avg Target Upside": f"{avg_target_upside:.1f}%"
+        "Avg Target Upside": f"{avg_target_upside:.1f}%",
     }
 
     st.subheader("Market Summary")
@@ -137,11 +125,7 @@ def main():
     Main app script.
     """
 
-    st.set_page_config(
-        layout="wide",
-        page_title="Market Overview",
-        page_icon="🌎"
-    )
+    st.set_page_config(layout="wide", page_title="Market Overview", page_icon="🌎")
     st.sidebar.title("Stocksense App")
     st.sidebar.success("Select page")
 

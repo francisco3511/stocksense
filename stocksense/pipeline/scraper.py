@@ -12,7 +12,7 @@ from pyrate_limiter import Duration, RequestRate, Limiter
 from config import get_config
 
 # Suppress logging from the yfinance and requests libraries
-logging.getLogger('yfinance').setLevel(logging.CRITICAL)
+logging.getLogger("yfinance").setLevel(logging.CRITICAL)
 
 
 class CachedLimiterSession(CacheMixin, LimiterMixin, Session):
@@ -24,6 +24,7 @@ class Scraper:
     Stock web scraping class (inc. financial, market, info and insider info)
     Currently supports yfinance source only.
     """
+
     def __init__(self, tic, source):
         self.tic = tic
         self.source = source
@@ -42,7 +43,7 @@ class Scraper:
             bucket_class=MemoryQueueBucket,
             backend=SQLiteCache(f"data/cache/{self.source}.cache"),
         )
-        session.headers['User-agent'] = 'my-program/1.0'
+        session.headers["User-agent"] = "my-program/1.0"
         return session
 
     def _get_yfinance_handler(self):
@@ -55,22 +56,25 @@ class Scraper:
         """
         Scrape daily market data for a stock, until present.
         """
-        df = pl.from_pandas(self.handler.history(
-            start=start_date,
-            auto_adjust=False
-        ).reset_index(drop=False))
+        df = pl.from_pandas(
+            self.handler.history(start=start_date, auto_adjust=False).reset_index(
+                drop=False
+            )
+        )
 
         if df.is_empty():
             raise Exception("No market data available.")
 
-        df = df.with_columns([
-            pl.col('Date').dt.date().alias('date'),
-            pl.col('Close').alias('close'),
-            pl.col('Adj Close').alias('adj_close'),
-            pl.col('Volume').alias('volume'),
-            pl.lit(self.tic).alias('tic')
-        ])
-        df = df.select(['date', 'close', 'adj_close', 'volume', 'tic'])
+        df = df.with_columns(
+            [
+                pl.col("Date").dt.date().alias("date"),
+                pl.col("Close").alias("close"),
+                pl.col("Adj Close").alias("adj_close"),
+                pl.col("Volume").alias("volume"),
+                pl.lit(self.tic).alias("tic"),
+            ]
+        )
+        df = df.select(["date", "close", "adj_close", "volume", "tic"])
         return df
 
     def _get_stock_info_yfinance(self) -> dict:
@@ -87,7 +91,7 @@ class Scraper:
 
         fields = get_config("scraping")["yahoo_info"]
         record = dict.fromkeys(list(fields.values()), None)
-        record['tic'] = self.tic
+        record["tic"] = self.tic
 
         for yh_key, key in fields.items():
             if yh_key in data:
@@ -96,9 +100,7 @@ class Scraper:
         return record
 
     def _get_fundamental_data_yfinance(
-        self,
-        start_date: dt.date,
-        end_date: dt.date
+        self, start_date: dt.date, end_date: dt.date
     ) -> pl.DataFrame:
         """
         Scraps fundamental data from Yahoo Finance using yfinance lib, searching
@@ -117,56 +119,48 @@ class Scraper:
         cf_df = pl.from_pandas(self.handler.quarterly_cashflow.T.reset_index())
 
         # parse dates
-        is_df = is_df.with_columns(
-            pl.col('index').dt.date().alias('index')
-        ).sort('index')
-        bs_df = bs_df.with_columns(
-            pl.col('index').dt.date().alias('index')
-        ).sort('index')
-        cf_df = cf_df.with_columns(
-            pl.col('index').dt.date().alias('index')
-        ).sort('index')
+        is_df = is_df.with_columns(pl.col("index").dt.date().alias("index")).sort(
+            "index"
+        )
+        bs_df = bs_df.with_columns(pl.col("index").dt.date().alias("index")).sort(
+            "index"
+        )
+        cf_df = cf_df.with_columns(pl.col("index").dt.date().alias("index")).sort(
+            "index"
+        )
 
         df = is_df.join_asof(
-            bs_df,
-            on='index',
-            strategy='backward',
-            tolerance=dt.timedelta(days=30)
+            bs_df, on="index", strategy="backward", tolerance=dt.timedelta(days=30)
         ).join_asof(
-            cf_df,
-            on='index',
-            strategy='backward',
-            tolerance=dt.timedelta(days=30)
+            cf_df, on="index", strategy="backward", tolerance=dt.timedelta(days=30)
         )
 
         for c in list(fields_to_keep.keys()):
             if c not in df.columns:
-                df = df.with_columns([
-                    pl.lit(None).alias(c),
-                ])
+                df = df.with_columns(
+                    [
+                        pl.lit(None).alias(c),
+                    ]
+                )
 
         df = df.select(list(fields_to_keep.keys()))
         df = df.rename(fields_to_keep)
         df = df.filter(
-            (pl.col('datadate') > start_date) &
-            (pl.col('datadate') <= end_date)
+            (pl.col("datadate") > start_date) & (pl.col("datadate") <= end_date)
         )
 
         if df.is_empty():
             raise Exception("No financial data available for date interval.")
 
         for c in df.columns[1:]:
-            df = df.with_columns(
-                pl.col(c).cast(pl.Float64)
-            )
+            df = df.with_columns(pl.col(c).cast(pl.Float64))
             df = df.with_columns((pl.col(c) / 1000000).round(3).alias(c))
 
-        df = df.with_columns([
-            (-pl.col('dvq')).alias('dvq'),
-            (-pl.col('capxq')).alias('capxq')
-        ])
-        df = df.unique(subset=['datadate']).sort('datadate')
-        df = df.with_columns(pl.lit(self.tic).alias('tic'))
+        df = df.with_columns(
+            [(-pl.col("dvq")).alias("dvq"), (-pl.col("capxq")).alias("capxq")]
+        )
+        df = df.unique(subset=["datadate"]).sort("datadate")
+        df = df.with_columns(pl.lit(self.tic).alias("tic"))
         return df
 
     def _get_earnings_dates_yfinance(self, start_date: dt.date, end_date: dt.date):
@@ -179,16 +173,17 @@ class Scraper:
             self.handler.get_earnings_dates(limit=n_quarters).reset_index()
         )
 
-        df = df.rename({
-            "Earnings Date": "rdq",
-            "Surprise(%)": "surprise_pct"
-        })
+        df = df.rename({"Earnings Date": "rdq", "Surprise(%)": "surprise_pct"})
 
         # format dates and filter data
-        df = df.select(['rdq', 'surprise_pct'])
-        df = df.with_columns(pl.col('rdq').dt.date())
-        df = df.filter((pl.col('rdq') >= start_date) & (pl.col('rdq') <= end_date))
-        df = df.unique(subset=['rdq']).sort('rdq').drop_nulls(subset=['surprise_pct', 'rdq'])
+        df = df.select(["rdq", "surprise_pct"])
+        df = df.with_columns(pl.col("rdq").dt.date())
+        df = df.filter((pl.col("rdq") >= start_date) & (pl.col("rdq") <= end_date))
+        df = (
+            df.unique(subset=["rdq"])
+            .sort("rdq")
+            .drop_nulls(subset=["surprise_pct", "rdq"])
+        )
 
         if df.is_empty():
             raise Exception("No financial release date available for date interval.")
@@ -226,28 +221,25 @@ class Scraper:
             df = self._get_fundamental_data_yfinance(start_date, end_date)
             earn_dates = self._get_earnings_dates_yfinance(start_date, end_date)
 
-            df = df.with_columns(pl.col('datadate').dt.date()).sort('datadate')
-            earn_dates = earn_dates.with_columns(pl.col('rdq').dt.date()).sort('rdq')
+            df = df.with_columns(pl.col("datadate").dt.date()).sort("datadate")
+            earn_dates = earn_dates.with_columns(pl.col("rdq").dt.date()).sort("rdq")
         else:
             raise Exception("Other methods not implemented")
 
         df = df.join_asof(
             earn_dates,
-            left_on='datadate',
-            right_on='rdq',
-            strategy='forward',
-            tolerance=dt.timedelta(days=80)
+            left_on="datadate",
+            right_on="rdq",
+            strategy="forward",
+            tolerance=dt.timedelta(days=80),
         )
 
         # in cases where data is found but no release dt, defer 80 days later
         df = df.with_columns(
-            pl.when(
-                pl.col('rdq').is_null()
-            ).then(
-                pl.col('datadate') + pl.duration(days=80)
-            ).otherwise(
-                pl.col('rdq')
-            ).alias('rdq')
+            pl.when(pl.col("rdq").is_null())
+            .then(pl.col("datadate") + pl.duration(days=80))
+            .otherwise(pl.col("rdq"))
+            .alias("rdq")
         )
         return df
 
@@ -257,35 +249,35 @@ class Scraper:
         """
 
         field_names = [
-            'filling_date',
-            'trade_date',
-            'owner_name',
-            'title',
-            'transaction_type',
-            'last_price',
-            'qty',
-            'shares_held',
-            'owned',
-            'value'
+            "filling_date",
+            "trade_date",
+            "owner_name",
+            "title",
+            "transaction_type",
+            "last_price",
+            "qty",
+            "shares_held",
+            "owned",
+            "value",
         ]
         # set url format for OpenInsider.com
         url = (
-            f'http://openinsider.com/screener?s={self.tic}&o=&pl=&ph=&ll=&lh=&fd=0'
-            '&fdr=&td=0&tdr=&fdlyl=&fdlyh=&daysago=&xp=1&xs=1&vl=&vh=&ocl=&och=&'
-            'sic1=-1&sicl=100&sich=9999&grp=0&nfl=&nfh=&nil=&nih=&nol=&noh=&v2l=&'
-            'v2h=&oc2l=&oc2h=&sortcol=0&cnt=1000&page=1'
+            f"http://openinsider.com/screener?s={self.tic}&o=&pl=&ph=&ll=&lh=&fd=0"
+            "&fdr=&td=0&tdr=&fdlyl=&fdlyh=&daysago=&xp=1&xs=1&vl=&vh=&ocl=&och=&"
+            "sic1=-1&sicl=100&sich=9999&grp=0&nfl=&nfh=&nil=&nih=&nol=&noh=&v2l=&"
+            "v2h=&oc2l=&oc2h=&sortcol=0&cnt=1000&page=1"
         )
         try:
             data = []
             response = requests.get(url)
-            soup = bs(response.text, 'html.parser')
-            table = soup.find('table', {'class': 'tinytable'})
+            soup = bs(response.text, "html.parser")
+            table = soup.find("table", {"class": "tinytable"})
             if not table:
                 raise ValueError("Table not found on page")
 
-            rows = table.find_all('tr')
+            rows = table.find_all("tr")
             for row in rows[1:]:
-                cols = row.find_all('td')
+                cols = row.find_all("td")
                 if not cols:
                     continue
                 insider_data = [
@@ -302,17 +294,21 @@ class Scraper:
                 ]
                 data.append(insider_data)
 
-            df = pl.DataFrame(data, schema=field_names, orient='row')
-            df = df.with_columns(pl.lit(self.tic).alias('tic'))
+            df = pl.DataFrame(data, schema=field_names, orient="row")
+            df = df.with_columns(pl.lit(self.tic).alias("tic"))
 
             if df.is_empty():
                 raise Exception("No insider data available")
 
-            df = df.with_columns([
-                pl.col('filling_date').str.to_datetime("%Y-%m-%d %H:%M:%S").dt.date(),
-                pl.col('trade_date').str.to_date("%Y-%m-%d")
-            ])
-            df = df.sort('filling_date')
+            df = df.with_columns(
+                [
+                    pl.col("filling_date")
+                    .str.to_datetime("%Y-%m-%d %H:%M:%S")
+                    .dt.date(),
+                    pl.col("trade_date").str.to_date("%Y-%m-%d"),
+                ]
+            )
+            df = df.sort("filling_date")
             return df
         except Exception as e:
             raise e
@@ -322,56 +318,58 @@ class Scraper:
         """
         List S&P500 stock info from wiki page and return Polars dataframe.
         """
-        resp = requests.get('http://en.wikipedia.org/wiki/List_of_S%26P_500_companies')
-        soup = bs(resp.text, 'lxml')
-        table = soup.find('table', id='constituents')
+        resp = requests.get("http://en.wikipedia.org/wiki/List_of_S%26P_500_companies")
+        soup = bs(resp.text, "lxml")
+        table = soup.find("table", id="constituents")
 
         data = {"tic": [], "name": [], "sector": []}
 
-        for row in table.findAll('tr')[1:]:
-            ticker = row.findAll('td')[0].text.replace('\n', '')
-            security = row.findAll('td')[1].text.replace('\n', '')
-            sector = row.findAll('td')[2].text.replace('\n', '')
+        for row in table.findAll("tr")[1:]:
+            ticker = row.findAll("td")[0].text.replace("\n", "")
+            security = row.findAll("td")[1].text.replace("\n", "")
+            sector = row.findAll("td")[2].text.replace("\n", "")
             data["tic"].append(ticker)
             data["name"].append(security)
             data["sector"].append(sector)
 
         df = pl.DataFrame(data)
-        df = df.with_columns(pl.col('tic').str.replace(".", "-", literal=True))
+        df = df.with_columns(pl.col("tic").str.replace(".", "-", literal=True))
         return df
 
     @staticmethod
     def get_exchange_stocks(exc_lis):
         headers = {
-            'authority': 'api.nasdaq.com',
-            'accept': 'application/json, text/plain, */*',
-            'user-agent': ('Mozilla/5.0 (Windows NT 10.0; Win64; x64) ') +
-            ('AppleWebKit/537.36 (KHTML, like Gecko)') +
-            ('Chrome/87.0.4280.141 Safari/537.36'),
-            'origin': 'https://www.nasdaq.com',
-            'sec-fetch-site': 'same-site',
-            'sec-fetch-mode': 'cors',
-            'sec-fetch-dest': 'empty',
-            'referer': 'https://www.nasdaq.com/',
-            'accept-language': 'en-US,en;q=0.9',
+            "authority": "api.nasdaq.com",
+            "accept": "application/json, text/plain, */*",
+            "user-agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) ")
+            + ("AppleWebKit/537.36 (KHTML, like Gecko)")
+            + ("Chrome/87.0.4280.141 Safari/537.36"),
+            "origin": "https://www.nasdaq.com",
+            "sec-fetch-site": "same-site",
+            "sec-fetch-mode": "cors",
+            "sec-fetch-dest": "empty",
+            "referer": "https://www.nasdaq.com/",
+            "accept-language": "en-US,en;q=0.9",
         }
         stock_list = []
         for exc in exc_lis:
             params = (
-                ('tableonly', 'true'),
-                ('exchange', exc),
-                ('limit', '25'),
-                ('offset', '0'),
-                ('download', 'true'),
+                ("tableonly", "true"),
+                ("exchange", exc),
+                ("limit", "25"),
+                ("offset", "0"),
+                ("download", "true"),
             )
             r = requests.get(
-                'https://api.nasdaq.com/api/screener/stocks',
+                "https://api.nasdaq.com/api/screener/stocks",
                 headers=headers,
-                params=params
+                params=params,
             )
-            data = r.json()['data']
-            df = pl.DataFrame(data['rows'])
-            df = df.filter(pl.col('marketCap') != "0.00").select(["symbol", "name", "sector"])
-            df = df.filter(~pl.col('symbol').str.contains(r"\.|\^"))
+            data = r.json()["data"]
+            df = pl.DataFrame(data["rows"])
+            df = df.filter(pl.col("marketCap") != "0.00").select(
+                ["symbol", "name", "sector"]
+            )
+            df = df.filter(~pl.col("symbol").str.contains(r"\.|\^"))
             stock_list.append(df)
-        return pl.concat(stock_list).unique(subset=['symbol'])
+        return pl.concat(stock_list).unique(subset=["symbol"])

@@ -35,10 +35,9 @@ def main(update, train, score):
         etl_handler.update_index_listings()
         etl_handler.extract()
     if train:
-        model_settings = get_config('model')
+        model_settings = get_config("model")
         data = Preprocess(
-            features=model_settings['features'],
-            targets=model_settings['targets']
+            features=model_settings["features"], targets=model_settings["targets"]
         ).run()
         handler = ModelHandler()
         handler.train(data)

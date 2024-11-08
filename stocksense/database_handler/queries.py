@@ -6,9 +6,9 @@ from typing import Optional
 
 def insert_data(connection: Connection, table_name: str, data: pl.DataFrame) -> None:
     try:
-        columns = ', '.join(data.columns)
-        placeholders = ', '.join(['?'] * len(data.columns))
-        sql = f'INSERT OR REPLACE INTO {table_name} ({columns}) VALUES ({placeholders})'
+        columns = ", ".join(data.columns)
+        placeholders = ", ".join(["?"] * len(data.columns))
+        sql = f"INSERT OR REPLACE INTO {table_name} ({columns}) VALUES ({placeholders})"
         cursor = connection.cursor()
         cursor.executemany(sql, data.to_numpy().tolist())
         connection.commit()
@@ -18,9 +18,9 @@ def insert_data(connection: Connection, table_name: str, data: pl.DataFrame) -> 
 
 def insert_record(connection: Connection, table_name: str, record: dict) -> None:
     try:
-        columns = ', '.join(record.keys())
-        placeholders = ', '.join(['?'] * len(record))
-        sql = f'INSERT OR REPLACE INTO {table_name} ({columns}) VALUES ({placeholders})'
+        columns = ", ".join(record.keys())
+        placeholders = ", ".join(["?"] * len(record))
+        sql = f"INSERT OR REPLACE INTO {table_name} ({columns}) VALUES ({placeholders})"
         cursor = connection.cursor()
         cursor.execute(sql, list(record.values()))
         connection.commit()
@@ -29,16 +29,13 @@ def insert_record(connection: Connection, table_name: str, record: dict) -> None
 
 
 def update_data(
-    connection: Connection,
-    table_name: str,
-    update_values: dict,
-    condition: dict
+    connection: Connection, table_name: str, update_values: dict, condition: dict
 ) -> None:
     try:
         cursor = connection.cursor()
-        set_clause = ', '.join([f"{col} = ?" for col in update_values.keys()])
-        where_clause = ' AND '.join([f"{col} = ?" for col in condition.keys()])
-        sql = f'UPDATE {table_name} SET {set_clause} WHERE {where_clause}'
+        set_clause = ", ".join([f"{col} = ?" for col in update_values.keys()])
+        where_clause = " AND ".join([f"{col} = ?" for col in condition.keys()])
+        sql = f"UPDATE {table_name} SET {set_clause} WHERE {where_clause}"
         parameters = list(update_values.values()) + list(condition.values())
         cursor.execute(sql, parameters)
         connection.commit()
@@ -49,8 +46,8 @@ def update_data(
 def delete_data(connection: Connection, table_name: str, condition: dict) -> None:
     try:
         cursor = connection.cursor()
-        where_clause = ' AND '.join([f"{col} = ?" for col in condition.keys()])
-        sql = f'DELETE FROM {table_name} WHERE {where_clause}'
+        where_clause = " AND ".join([f"{col} = ?" for col in condition.keys()])
+        sql = f"DELETE FROM {table_name} WHERE {where_clause}"
         parameters = list(condition.values())
         cursor.execute(sql, parameters)
         connection.commit()
@@ -61,7 +58,7 @@ def delete_data(connection: Connection, table_name: str, condition: dict) -> Non
 
 def count_data(connection: Connection, table_name: str, column: str) -> Optional[int]:
     try:
-        sql = f'SELECT COUNT(DISTINCT {column}) FROM {table_name}'
+        sql = f"SELECT COUNT(DISTINCT {column}) FROM {table_name}"
         cursor = connection.cursor()
         cursor.execute(sql)
         count = cursor.fetchone()[0]
@@ -72,24 +69,24 @@ def count_data(connection: Connection, table_name: str, column: str) -> Optional
 
 
 def fetch_record(
-    connection: Connection,
-    table_name: str,
-    condition: Optional[dict] = None
+    connection: Connection, table_name: str, condition: Optional[dict] = None
 ) -> Optional[pl.DataFrame]:
     try:
         cursor = connection.cursor()
         if condition:
-            where_clause = ' AND '.join([f"{col} = ?" for col in condition.keys()])
-            sql = f'SELECT * FROM {table_name} WHERE {where_clause}'
+            where_clause = " AND ".join([f"{col} = ?" for col in condition.keys()])
+            sql = f"SELECT * FROM {table_name} WHERE {where_clause}"
             parameters = list(condition.values())
             cursor.execute(sql, parameters)
             row = cursor.fetchone()
         else:
-            cursor.execute(f'SELECT * FROM {table_name}')
+            cursor.execute(f"SELECT * FROM {table_name}")
             row = cursor.fetchone()
         if row:
             columns = [description[0] for description in cursor.description]
-            return pl.DataFrame([row], schema=columns, orient='row', infer_schema_length=None)
+            return pl.DataFrame(
+                [row], schema=columns, orient="row", infer_schema_length=None
+            )
         else:
             return None
     except Error as e:
@@ -98,23 +95,23 @@ def fetch_record(
 
 
 def fetch_data(
-    connection: Connection,
-    table_name: str,
-    condition: Optional[dict] = None
+    connection: Connection, table_name: str, condition: Optional[dict] = None
 ) -> Optional[pl.DataFrame]:
     try:
         cursor = connection.cursor()
         if condition:
-            where_clause = ' AND '.join([f"{col} = ?" for col in condition.keys()])
-            sql = f'SELECT * FROM {table_name} WHERE {where_clause}'
+            where_clause = " AND ".join([f"{col} = ?" for col in condition.keys()])
+            sql = f"SELECT * FROM {table_name} WHERE {where_clause}"
             parameters = list(condition.values())
             cursor.execute(sql, parameters)
         else:
-            cursor.execute(f'SELECT * FROM {table_name}')
+            cursor.execute(f"SELECT * FROM {table_name}")
         columns = [description[0] for description in cursor.description]
         data = cursor.fetchall()
         if data:
-            return pl.DataFrame(data, schema=columns, orient='row', infer_schema_length=None)
+            return pl.DataFrame(
+                data, schema=columns, orient="row", infer_schema_length=None
+            )
         else:
             return None
     except Error as e:

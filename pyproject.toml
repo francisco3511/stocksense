@@ -1,10 +1,13 @@
 [project]
 name = "stocksense"
-version = "1.0.0"
+version = "1.0.1"
 description = "Package for value investing and advanced stock analytics"
 authors = [
     {name="Francisco Silva", email="francisco3597@gmail.com"},
 ]
+readme = "README.md"
+requires-python = ">=3.11"
+
 dependencies = [
     "requests",
     "PyYAML",
@@ -26,16 +29,23 @@ dependencies = [
     "nbformat>=4.2.0",
     "watchdog",
     "ipykernel",
-    "shap",
-    "ruff"
+    "shap"
 ]
 
-readme = "README.md"
-requires-python = ">=3.9"
+[project.optional-dependencies]
+dev = ["pytest", "pylint", "pytest-cov", "ruff", "black", "black[jupyter]"]
 
 [build-system]
 requires = ["setuptools"]
 build-backend = "setuptools.build_meta"
+
+[tool.coverage.run]
+omit = [
+    "*/conftest.py", "*/test*", # omit test files
+]
+
+[tool.coverage.report]
+fail_under = 80
 
 [tool.setuptools.packages.find]
 where = ["stocksense"]

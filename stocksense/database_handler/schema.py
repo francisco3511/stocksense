@@ -4,7 +4,7 @@ from loguru import logger
 
 def create_tables(connection: Connection | None) -> None:
     tables = {
-        'stocks': '''
+        "stocks": """
             CREATE TABLE IF NOT EXISTS stock (
                 tic TEXT PRIMARY KEY,
                 name TEXT,
@@ -13,8 +13,8 @@ def create_tables(connection: Connection | None) -> None:
                 spx_status INTEGER,
                 active INTEGER
             )
-        ''',
-        'info': '''
+        """,
+        "info": """
             CREATE TABLE IF NOT EXISTS info (
                 tic TEXT PRIMARY KEY,
                 risk INT,
@@ -39,8 +39,8 @@ def create_tables(connection: Connection | None) -> None:
                 target_high REAL,
                 target_mean REAL
             )
-        ''',
-        'financial': '''
+        """,
+        "financial": """
             CREATE TABLE IF NOT EXISTS financial (
                 tic TEXT,
                 datadate TEXT,
@@ -71,8 +71,8 @@ def create_tables(connection: Connection | None) -> None:
                 surprise_pct REAL,
                 PRIMARY KEY (tic, datadate)
             )
-        ''',
-        'market': '''
+        """,
+        "market": """
             CREATE TABLE IF NOT EXISTS market (
                 tic TEXT,
                 date TEXT,
@@ -81,8 +81,8 @@ def create_tables(connection: Connection | None) -> None:
                 volume INTEGER,
                 PRIMARY KEY (tic, date)
             )
-        ''',
-        'insider': '''
+        """,
+        "insider": """
             CREATE TABLE IF NOT EXISTS insider (
                 tic TEXT,
                 filling_date TEXT,
@@ -97,15 +97,15 @@ def create_tables(connection: Connection | None) -> None:
                 value TEXT,
                 PRIMARY KEY (tic, filling_date, owner_name, transaction_type, value)
             )
-        ''',
-        'sp500': '''
+        """,
+        "sp500": """
             CREATE TABLE IF NOT EXISTS sp500 (
                 date TEXT PRIMARY KEY,
                 close REAL,
                 adj_close REAL,
                 volume INTEGER
             )
-        '''
+        """,
     }
 
     try:

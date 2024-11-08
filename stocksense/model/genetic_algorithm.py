@@ -17,7 +17,7 @@ class GeneticAlgorithm:
         fitness_func,
         init_range_low,
         init_range_high,
-        gene_space
+        gene_space,
     ):
         self.num_generations = num_generations
         self.num_parents_mating = num_parents_mating
@@ -31,7 +31,7 @@ class GeneticAlgorithm:
         self.no_improvement_count = 0
         self.best_fitness_value = 0
         self.no_improvement_limit = 5
-        self.random_seed = get_config('model')['seed']
+        self.random_seed = get_config("model")["seed"]
 
     def create_instance(self):
         logger.info("creating GA instance")
@@ -51,7 +51,7 @@ class GeneticAlgorithm:
             mutation_type="random",
             crossover_type="single_point",
             on_generation=self.on_generation,
-            parallel_processing=-1
+            parallel_processing=-1,
         )
 
     def on_generation(self, ga_instance):
@@ -59,7 +59,9 @@ class GeneticAlgorithm:
         Callback function.
         """
 
-        best_solution, best_solution_fitness, best_solution_idx = ga_instance.best_solution()
+        best_solution, best_solution_fitness, best_solution_idx = (
+            ga_instance.best_solution()
+        )
         logger.info(f"generation {ga_instance.generations_completed}:")
         logger.info(f"\tbest solution: {best_solution}")
         logger.info(f"\tbest fitness: {best_solution_fitness}")
@@ -71,12 +73,16 @@ class GeneticAlgorithm:
             self.no_improvement_count += 1
 
         if self.no_improvement_count >= self.no_improvement_limit:
-            print(f"no improvement for {self.no_improvement_limit} generations. stopping GA.")
+            print(
+                f"no improvement for {self.no_improvement_limit} generations. stopping GA."
+            )
             ga_instance.terminate()
 
     def train(self):
         if self.ga_instance is None:
-            raise Exception("GA instance is not created. Call create_instance() before training.")
+            raise Exception(
+                "GA instance is not created. Call create_instance() before training."
+            )
         self.ga_instance.run()
 
     def best_solution(self):
@@ -97,10 +103,7 @@ class GeneticAlgorithm:
 
 
 def get_train_val_split(
-    data: pl.DataFrame,
-    start_year: int,
-    train_window: int,
-    val_window: int
+    data: pl.DataFrame, start_year: int, train_window: int, val_window: int
 ):
     """
     Split the dataset into training and validation sets,
@@ -124,42 +127,35 @@ def get_train_val_split(
     """
 
     train = data.filter(
-        (pl.col('tdq').dt.year() >= start_year) &
-        (pl.col('tdq').dt.year() < start_year + train_window)
+        (pl.col("tdq").dt.year() >= start_year)
+        & (pl.col("tdq").dt.year() < start_year + train_window)
     )
     val = data.filter(
-        (pl.col('tdq').dt.year() > start_year + train_window) &
-        (pl.col('tdq').dt.year() <= start_year + train_window + val_window)
+        (pl.col("tdq").dt.year() > start_year + train_window)
+        & (pl.col("tdq").dt.year() <= start_year + train_window + val_window)
     )
     return train, val
 
 
 def fitness_function_wrapper(
-    data,
-    tic_col,
-    date_col,
-    target_col,
-    start_year,
-    train_window,
-    val_window,
-    scale
+    data, tic_col, date_col, target_col, start_year, train_window, val_window, scale
 ):
     def fitness_function(ga_instance, solution, solution_idx):
         params = {
-            'objective': 'binary:logistic',
-            'learning_rate': solution[0],
-            'n_estimators': int(solution[1]),
-            'max_depth': int(solution[2]),
-            'min_child_weight': solution[3],
-            'gamma': solution[4],
-            'subsample': solution[5],
-            'colsample_bytree': solution[6],
-            'reg_alpha': solution[7],
-            'reg_lambda': solution[8],
-            'scale_pos_weight': scale,
-            'eval_metric': 'logloss',
-            'nthread': -1,
-            'seed': get_config('model')['seed']
+            "objective": "binary:logistic",
+            "learning_rate": solution[0],
+            "n_estimators": int(solution[1]),
+            "max_depth": int(solution[2]),
+            "min_child_weight": solution[3],
+            "gamma": solution[4],
+            "subsample": solution[5],
+            "colsample_bytree": solution[6],
+            "reg_alpha": solution[7],
+            "reg_lambda": solution[8],
+            "scale_pos_weight": scale,
+            "eval_metric": "logloss",
+            "nthread": -1,
+            "seed": get_config("model")["seed"],
         }
 
         model = XGBoostModel(params)
@@ -167,13 +163,15 @@ def fitness_function_wrapper(
         window = train_window
         while start_year + window + val_window < dt.datetime.now().year - 1:
             train, val = get_train_val_split(data, start_year, window, val_window)
-            X_train = train.select(pl.exclude([tic_col, target_col, date_col])).to_pandas()
+            X_train = train.select(
+                pl.exclude([tic_col, target_col, date_col])
+            ).to_pandas()
             y_train = train.select(target_col).to_pandas().values.ravel()
             X_val = val.select(pl.exclude([tic_col, target_col, date_col])).to_pandas()
             y_val = val.select(target_col).to_pandas().values.ravel()
 
             model.train(X_train, y_train)
-            perf = model.evaluate(X_val, y_val)['pr_auc']
+            perf = model.evaluate(X_val, y_val)["pr_auc"]
             perfs.append(perf)
             window += 1
 
