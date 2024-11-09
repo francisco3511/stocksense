@@ -1,5 +1,4 @@
 import numpy as np
-from pathlib import Path
 import polars as pl
 import sqlite3
 from typing import Optional
@@ -24,8 +23,8 @@ class DatabaseHandler:
     Wrapper for database handling.
     """
 
-    def __init__(self, db_path: str = "data/database/stock_db.db"):
-        self.db = DatabaseConnection(Path(db_path))
+    def __init__(self):
+        self.db = DatabaseConnection()
         conn = self.db.get_connection()
         create_tables(conn)
 

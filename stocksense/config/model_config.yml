@@ -68,9 +68,10 @@
     - 'pe_yoy'
     - 'pb_yoy'
     - 'ps_yoy'
-'targets':
-    - 'freturn'
-    - 'adj_freturn'
-    - 'fperf'
-    - 'adj_fperf'
+'target': 'fperf'
+'id_col': 'tic'
+'date_col': 'tdq'
+'train_start': 2007
+'train_window': 12
+'val_window': 2
 'seed': 100

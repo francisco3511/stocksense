@@ -8,6 +8,8 @@ from config import get_config
 from .xgboost_model import XGBoostModel
 from .genetic_algorithm import GeneticAlgorithm, fitness_function_wrapper
 
+PACKAGE_DIR = Path(__file__).parents[1]
+MODEL_PATH = PACKAGE_DIR / "models"
 
 warnings.filterwarnings("ignore")
 
@@ -19,13 +21,14 @@ class ModelHandler:
     """
 
     def __init__(self):
-        self.tic_col = "tic"
-        self.date_col = "tdq"
-        self.target_col = "fperf"
-        self.train_start = 2007
-        self.train_window = 12
-        self.val_window = 2
-        self.model_path = Path("models/")
+        model_settings = get_config("model")
+        self.id_col = model_settings["id_col"]
+        self.date_col = model_settings["date_col"]
+        self.target_col = model_settings["target"]
+        self.train_start = model_settings["train_start"]
+        self.train_window = model_settings["train_window"]
+        self.val_window = model_settings["val_window"]
+        self.seed = model_settings["seed"]
 
     def train(self, data: pl.DataFrame):
         """
@@ -35,11 +38,6 @@ class ModelHandler:
         ----------
         data : pl.DataFrame
             Preprocessed financial data.
-
-        Raises
-        ------
-        Exception
-            If window size overflows.
         """
         try:
             if (
@@ -49,46 +47,15 @@ class ModelHandler:
                 raise Exception("Window size overflow")
 
             trade_date = find_last_trading_date()
-
             logger.info(f"START training model - {trade_date}")
-
-            self.model_path.mkdir(parents=True, exist_ok=True)
 
             train_df = data.filter(
                 (pl.col("tdq") < trade_date)
                 & ~pl.all_horizontal(pl.col(self.target_col).is_null())
             )
-
-            # get imbalance approx scale
-            scale = int(
-                len(
-                    train_df.filter(
-                        (pl.col(self.target_col) == 0)
-                        & (pl.col("tdq").dt.year() >= self.train_start)
-                        & (
-                            pl.col("tdq").dt.year()
-                            < self.train_start + self.train_window
-                        )
-                    )
-                )
-                / len(
-                    train_df.filter(
-                        (pl.col(self.target_col) == 1)
-                        & (pl.col("tdq").dt.year() >= self.train_start)
-                        & (
-                            pl.col("tdq").dt.year()
-                            < self.train_start + self.train_window
-                        )
-                    )
-                )
-            )
-
-            aux_cols = ["datadate", "rdq", "sector"] + [
-                t for t in get_config("model")["targets"] if t != self.target_col
-            ]
-            train_df = train_df.select(
-                [c for c in train_df.columns if c not in aux_cols]
-            )
+            scale = self.get_dataset_imbalance_scale(train_df)
+            aux_cols = ["datadate", "rdq", "sector"]
+            train_df = train_df.select([c for c in train_df.columns if c not in aux_cols])
 
             ga = GeneticAlgorithm(
                 num_generations=50,
@@ -138,7 +105,7 @@ class ModelHandler:
                 "scale_pos_weight": scale,
                 "eval_metric": "logloss",
                 "nthread": -1,
-                "seed": get_config("model")["seed"],
+                "seed": self.seed
             }
 
             X_train = train_df.select(
@@ -152,15 +119,40 @@ class ModelHandler:
         except Exception:
             logger.error("ERROR: failed to train model.")
 
-    def score(self):
+    def get_dataset_imbalance_scale(self, train_df):
+        """
+        Compute dataset class imbalance scale.
+
+        Parameters
+        ----------
+        train_df : pl.DataFrame
+            Training dataset.
+
+        Returns
+        -------
+        int
+            Class imbalance scale.
+        """
+        return int(
+            len(train_df.filter(
+                (pl.col(self.target_col) == 0) &
+                (pl.col("tdq").dt.year() >= self.train_start) &
+                (pl.col("tdq").dt.year() < self.train_start + self.train_window)
+            )
+        ) / len(train_df.filter(
+                (pl.col(self.target_col) == 1) &
+                (pl.col("tdq").dt.year() >= self.train_start) &
+                (pl.col("tdq").dt.year() < self.train_start + self.train_window)
+            )
+        ))
+
+    def score(self, data):
         """
         Classify using sector-specific models.
         """
 
         try:
-            data = load_processed_data()
             trade_date = find_last_trading_date()
-
             logger.info(f"START stocksense eval - {trade_date}")
 
             test_df = data.filter((pl.col("tdq") == trade_date))
@@ -181,59 +173,6 @@ class ModelHandler:
             model.predict_proba(test_df)
         except Exception:
             logger.error("ERROR: no model available.")
-
-
-def find_most_recent(file_dir: Path, format: str = "csv"):
-    """
-    Find most recent file in directory.
-
-    Parameters
-    ----------
-    file_dir : Path
-        Directory containing files.
-    format : str, optional
-        File format, by default "csv".
-
-    Returns
-    -------
-    Path
-        Path to most recent file.
-
-    Raises
-    ------
-    FileNotFoundError
-    """
-    files = file_dir.glob(f"*.{format}")
-    date_files = [
-        (file, dt.datetime.strptime(file.stem.split("_")[-1], "%Y-%m-%d"))
-        for file in files
-    ]
-    if date_files:
-        return max(date_files, key=lambda x: x[1])[0]
-    else:
-        raise FileNotFoundError
-
-
-def load_processed_data():
-    """
-    Loads last batch of processed data.
-
-    Returns
-    -------
-    pl.DataFrame
-        Production ready training data.
-
-    Raises
-    ------
-    FileNotFoundError
-        If no file is found.
-    """
-    try:
-        directory_path = Path("data/1_work_data/processed")
-        most_recent_file = find_most_recent(directory_path)
-        return pl.read_csv(most_recent_file, try_parse_dates=True)
-    except FileNotFoundError:
-        logger.error("no processed data found.")
 
 
 def find_last_trading_date():

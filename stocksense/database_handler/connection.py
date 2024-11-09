@@ -3,10 +3,13 @@ from sqlite3 import Error
 from pathlib import Path
 from loguru import logger
 
+PACKAGE_DIR = Path(__file__).parents[1]
+DATABASE_PATH = PACKAGE_DIR / "data/database/stock_db.db"
+
 
 class DatabaseConnection:
-    def __init__(self, db_path: Path):
-        self.db_path = db_path
+    def __init__(self):
+        self.db_path = DATABASE_PATH
         self.connection = None
         self._create_connection()
 

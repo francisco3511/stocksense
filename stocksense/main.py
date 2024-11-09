@@ -1,9 +1,5 @@
 import click
-import datetime as dt
-from loguru import logger
-from pathlib import Path
 
-from config import get_config
 from pipeline import ETL, Preprocess
 from model import ModelHandler
 
@@ -17,28 +13,12 @@ def main(update, train, score):
     CLI handling.
     """
 
-    log_path = Path("log/")
-    log_path.mkdir(parents=True, exist_ok=True)
-    logger.remove()
-    logger.add(
-        rf"log/log_{dt.datetime.now().strftime('%Y%m%d')}.log",
-        backtrace=False,
-        format=(
-            "{time:YYYY-MM-DD HH:mm:ss} | "
-            "{level} | "
-            "{module}:{function}:{line} - {message}"
-        ),
-    )
-
     if update:
         etl_handler = ETL()
         etl_handler.update_index_listings()
         etl_handler.extract()
     if train:
-        model_settings = get_config("model")
-        data = Preprocess(
-            features=model_settings["features"], targets=model_settings["targets"]
-        ).run()
+        data = Preprocess().run()
         handler = ModelHandler()
         handler.train(data)
     if score:

@@ -3,18 +3,14 @@ import numpy as np
 import datetime as dt
 import polars_talib as plta
 from loguru import logger
+from pathlib import Path
 
+from config import get_config
 from database_handler import DatabaseHandler
 
-BIWEEKLY_TRADING_DAYS = 10
-MONTHLY_TRADING_DAYS = 21
-QUARTERLY_TRADING_DAYS = 61
-SEMESTER_TRADING_DAYS = 122
-YEARLY_TRADING_DAYS = 252
-
-PREDICTION_HORIZON = 4
-OVER_PERFORMACE_THRES = 0.1
-PERFORMACE_THRES = 0.4
+CONFIG = get_config("processing")
+PACKAGE_DIR = Path(__file__).parents[1]
+DATA_PATH = PACKAGE_DIR / "data"
 
 
 class Preprocess:
@@ -22,10 +18,8 @@ class Preprocess:
     Stock data processing pipeline handler.
     """
 
-    def __init__(self, features: list, targets: list):
+    def __init__(self):
         self.db = DatabaseHandler()
-        self.features = features
-        self.targets = targets
         self.index_data = self._process_index_data()
 
     def run(self):
@@ -33,9 +27,9 @@ class Preprocess:
         Runs main data processing pipeline.
         """
         logger.info("START processing stock data")
-        data = self._feature_engineering()
-        data = self._clean_data(data)
-        logger.info("END processing stock data")
+        data = self.feature_engineering()
+        data = self.clean_data(data)
+        logger.success("END processing stock data")
         return data
 
     def _process_index_data(self) -> pl.DataFrame:
@@ -58,10 +52,21 @@ class Preprocess:
         # compute index past returns
         index_df = index_df.with_columns(
             [
-                pl.col("close").pct_change(MONTHLY_TRADING_DAYS).alias("index_mom"),
-                pl.col("close").pct_change(QUARTERLY_TRADING_DAYS).alias("index_qoq"),
-                pl.col("close").pct_change(YEARLY_TRADING_DAYS).alias("index_yoy"),
-                pl.col("close").pct_change(2 * YEARLY_TRADING_DAYS).alias("index_2y"),
+                pl.col("close")
+                .pct_change(CONFIG["month_trading_days"])
+                .alias("index_mom"),
+                pl.col("close")
+                .pct_change(CONFIG["quarter_trading_days"])
+                .alias("index_qoq"),
+                pl.col("close")
+                .pct_change(CONFIG["semester_trading_days"])
+                .alias("index_sos"),
+                pl.col("close")
+                .pct_change(CONFIG["year_trading_days"])
+                .alias("index_yoy"),
+                pl.col("close")
+                .pct_change(CONFIG["2year_trading_days"])
+                .alias("index_2y"),
             ]
         )
 
@@ -69,17 +74,21 @@ class Preprocess:
         index_df = index_df.with_columns(
             (pl.col("close") / pl.col("close").shift(1)).log().alias("log_return")
         ).with_columns(
-            [
-                pl.col("log_return")
-                .rolling_std(MONTHLY_TRADING_DAYS)
-                .alias("index_vol_mom"),
-                pl.col("log_return")
-                .rolling_std(QUARTERLY_TRADING_DAYS)
-                .alias("index_vol_qoq"),
-                pl.col("log_return")
-                .rolling_std(YEARLY_TRADING_DAYS)
-                .alias("index_vol_yoy"),
-            ]
+            pl.col("log_return")
+            .rolling_std(CONFIG["month_trading_days"])
+            .alias("index_vol_mom"),
+            pl.col("log_return")
+            .rolling_std(CONFIG["quarter_trading_days"])
+            .alias("index_vol_qoq"),
+            pl.col("log_return")
+            .rolling_std(CONFIG["semester_trading_days"])
+            .alias("index_vol_sos"),
+            pl.col("log_return")
+            .rolling_std(CONFIG["year_trading_days"])
+            .alias("index_vol_yoy"),
+            pl.col("log_return")
+            .rolling_std(CONFIG["2year_trading_days"])
+            .alias("index_vol_2y"),
         )
 
         index_df = index_df.rename(
@@ -99,15 +108,18 @@ class Preprocess:
                 "index_adj_close",
                 "index_mom",
                 "index_qoq",
+                "index_sos",
                 "index_yoy",
                 "index_2y",
                 "index_vol_mom",
                 "index_vol_qoq",
+                "index_vol_sos",
                 "index_vol_yoy",
+                "index_vol_2y",
             ]
         )
 
-    def _feature_engineering(self) -> pl.DataFrame:
+    def feature_engineering(self) -> pl.DataFrame:
         """
         Compute financial ratios and features for training.
         """
@@ -132,7 +144,7 @@ class Preprocess:
         logger.success(f"{df.shape[1]} features PROCESSED")
         return df
 
-    def _clean_data(self, data: pl.DataFrame) -> pl.DataFrame:
+    def clean_data(self, data: pl.DataFrame) -> pl.DataFrame:
         """
         Clean and process financial features dataset.
 
@@ -147,10 +159,9 @@ class Preprocess:
             Filtered and processed data.
         """
 
-        df = data.select(
-            ["datadate", "rdq", "tdq", "tic", "sector"] + self.features + self.targets
-        )
-        df = df.filter(pl.col("tdq") <= pl.lit(dt.datetime.today().date()))
+        logger.info("START cleaning data")
+
+        df = data.filter(pl.col("tdq") <= pl.lit(dt.datetime.today().date()))
         growth_alias = ["qoq", "yoy", "2y", "return"]
         growth_vars = [f for f in df.columns if any(xf in f for xf in growth_alias)]
         df = df.filter(~pl.all_horizontal(pl.col("niq_2y").is_null()))
@@ -187,8 +198,9 @@ class Preprocess:
         )
 
         df = df.with_columns([pl.col("freturn") * 100, pl.col("adj_freturn") * 100])
-
         df = df.to_dummies(columns=["sector"])
+
+        logger.success(f"{df.shape[0]} rows retained after CLEANING")
         return df
 
     def save_data(self, data: pl.DataFrame) -> None:
@@ -292,12 +304,10 @@ def adjust_shares(df: pl.DataFrame) -> pl.DataFrame:
 
     # compute cumulative product of adjustment factors in reverse (from latest to earliest)
     df = df.sort(by=["tic", "datadate"]).with_columns(
-        [
-            pl.col("adjustment_factor")
-            .cum_prod(reverse=True)
-            .over("tic")
-            .alias("cum_adjustment_factor")
-        ]
+        pl.col("adjustment_factor")
+        .cum_prod(reverse=True)
+        .over("tic")
+        .alias("cum_adjustment_factor")
     )
 
     # apply the cumulative adjustment to the financial data
@@ -428,43 +438,36 @@ def compute_financial_ratios(df: pl.DataFrame) -> pl.DataFrame:
     pl.DataFrame
         Data with additional columns.
     """
-    df = (
+    return (
         df.lazy()
         .with_columns(
-            [
-                (pl.col("niq").rolling_sum(4) / pl.col("atq").rolling_mean(2))
-                .over("tic")
-                .alias("roa"),
-                (pl.col("niq").rolling_sum(4) / pl.col("seqq"))
-                .over("tic")
-                .alias("roe"),
-                ((pl.col("saleq") - pl.col("cogsq")) / pl.col("saleq")).alias("gpm"),
-                (pl.col("ebitdaq") / pl.col("saleq")).alias("ebitdam"),
-                (pl.col("oancfq") / pl.col("saleq")).alias("cfm"),
-                (pl.col("oancfq") - pl.col("capxq")).alias("fcf"),
-                (pl.col("actq") / pl.col("lctq")).alias("cr"),
-                ((pl.col("rectq") + pl.col("cheq")) / pl.col("lctq")).alias("qr"),
-                (pl.col("cheq") / pl.col("lctq")).alias("csr"),
-                (pl.col("ltq") / pl.col("atq")).alias("dr"),
-                (pl.col("ltq") / pl.col("seqq")).alias("der"),
-                (pl.col("ltq") / pl.col("ebitdaq")).alias("debitda"),
-                (pl.col("dlttq") / pl.col("atq")).alias("ltda"),
-                ((pl.col("oancfq") - pl.col("capxq")) / pl.col("dlttq")).alias("ltcr"),
-                (pl.col("saleq") / pl.col("invtq").rolling_mean(2))
-                .over("tic")
-                .alias("itr"),
-                (pl.col("saleq") / pl.col("rectq").rolling_mean(2))
-                .over("tic")
-                .alias("rtr"),
-                (pl.col("saleq") / pl.col("atq").rolling_mean(2))
-                .over("tic")
-                .alias("atr"),
-                pl.col("atq").log().alias("size"),
-            ]
+            (pl.col("niq").rolling_sum(4) / pl.col("atq").rolling_mean(2))
+            .over("tic")
+            .alias("roa"),
+            (pl.col("niq").rolling_sum(4) / pl.col("seqq")).over("tic").alias("roe"),
+            ((pl.col("saleq") - pl.col("cogsq")) / pl.col("saleq")).alias("gpm"),
+            (pl.col("ebitdaq") / pl.col("saleq")).alias("ebitdam"),
+            (pl.col("oancfq") / pl.col("saleq")).alias("cfm"),
+            (pl.col("oancfq") - pl.col("capxq")).alias("fcf"),
+            (pl.col("actq") / pl.col("lctq")).alias("cr"),
+            ((pl.col("rectq") + pl.col("cheq")) / pl.col("lctq")).alias("qr"),
+            (pl.col("cheq") / pl.col("lctq")).alias("csr"),
+            (pl.col("ltq") / pl.col("atq")).alias("dr"),
+            (pl.col("ltq") / pl.col("seqq")).alias("der"),
+            (pl.col("ltq") / pl.col("ebitdaq")).alias("debitda"),
+            (pl.col("dlttq") / pl.col("atq")).alias("ltda"),
+            ((pl.col("oancfq") - pl.col("capxq")) / pl.col("dlttq")).alias("ltcr"),
+            (pl.col("saleq") / pl.col("invtq").rolling_mean(2))
+            .over("tic")
+            .alias("itr"),
+            (pl.col("saleq") / pl.col("rectq").rolling_mean(2))
+            .over("tic")
+            .alias("rtr"),
+            (pl.col("saleq") / pl.col("atq").rolling_mean(2)).over("tic").alias("atr"),
+            pl.col("atq").log().alias("size"),
         )
         .collect()
     )
-    return df
 
 
 def compute_market_ratios(
@@ -542,26 +545,22 @@ def compute_daily_momentum_features(df: pl.DataFrame) -> pl.DataFrame:
             plta.rsi(pl.col("close"), timeperiod=14).over("tic").alias("rsi_14d"),
             plta.rsi(pl.col("close"), timeperiod=30).over("tic").alias("rsi_30d"),
             plta.rsi(pl.col("close"), timeperiod=60).over("tic").alias("rsi_60d"),
-            plta.rsi(pl.col("close"), timeperiod=QUARTERLY_TRADING_DAYS)
-            .over("tic")
-            .alias("rsi_90d"),
-            plta.rsi(pl.col("close"), timeperiod=YEARLY_TRADING_DAYS)
-            .over("tic")
-            .alias("rsi_1y"),
+            plta.rsi(pl.col("close"), timeperiod=90).over("tic").alias("rsi_90d"),
+            plta.rsi(pl.col("close"), timeperiod=360).over("tic").alias("rsi_1y"),
             pl.col("close")
-            .pct_change(MONTHLY_TRADING_DAYS)
+            .pct_change(CONFIG["month_trading_days"])
             .over("tic")
             .alias("price_mom"),
             pl.col("close")
-            .pct_change(QUARTERLY_TRADING_DAYS)
+            .pct_change(CONFIG["quarter_trading_days"])
             .over("tic")
             .alias("price_qoq"),
             pl.col("close")
-            .pct_change(YEARLY_TRADING_DAYS)
+            .pct_change(CONFIG["year_trading_days"])
             .over("tic")
             .alias("price_yoy"),
             pl.col("close")
-            .pct_change(2 * YEARLY_TRADING_DAYS)
+            .pct_change(CONFIG["2year_trading_days"])
             .over("tic")
             .alias("price_2y"),
         ]
@@ -589,20 +588,18 @@ def compute_daily_volatility_features(df: pl.DataFrame) -> pl.DataFrame:
         .alias("log_return")
     )
     return df.with_columns(
-        [
-            pl.col("log_return")
-            .rolling_std(MONTHLY_TRADING_DAYS)
-            .over("tic")
-            .alias("vol_mom"),
-            pl.col("log_return")
-            .rolling_std(QUARTERLY_TRADING_DAYS)
-            .over("tic")
-            .alias("vol_qoq"),
-            pl.col("log_return")
-            .rolling_std(YEARLY_TRADING_DAYS)
-            .over("tic")
-            .alias("vol_yoy"),
-        ]
+        pl.col("log_return")
+        .rolling_std(CONFIG["month_trading_days"])
+        .over("tic")
+        .alias("vol_mom"),
+        pl.col("log_return")
+        .rolling_std(CONFIG["quarter_trading_days"])
+        .over("tic")
+        .alias("vol_qoq"),
+        pl.col("log_return")
+        .rolling_std(CONFIG["year_trading_days"])
+        .over("tic")
+        .alias("vol_yoy"),
     )
 
 
@@ -622,27 +619,21 @@ def compute_hybrid_features(df: pl.DataFrame) -> pl.DataFrame:
     """
     return (
         df.with_columns(
-            [
-                (
-                    (pl.col("close") - pl.col("rdq_close")) / pl.col("rdq_close") * 100
-                ).alias("earn_drift"),
-                (pl.col("price_mom") / pl.col("index_mom")).alias("momentum_mom"),
-                (pl.col("price_qoq") / pl.col("index_qoq")).alias("momentum_qoq"),
-                (pl.col("price_yoy") / pl.col("index_yoy")).alias("momentum_yoy"),
-                (pl.col("price_2y") / pl.col("index_2y")).alias("momentum_2y"),
-                (pl.col("vol_mom") / pl.col("index_vol_mom")).alias("rel_vol_mom"),
-                (pl.col("vol_qoq") / pl.col("index_vol_qoq")).alias("rel_vol_qoq"),
-                (pl.col("vol_yoy") / pl.col("index_vol_yoy")).alias("rel_vol_yoy"),
-                (pl.col("niq").rolling_sum(4) / pl.col("cshoq"))
-                .over("tic")
-                .alias("eps"),
-            ]
+            ((pl.col("close") - pl.col("rdq_close")) / pl.col("rdq_close") * 100).alias(
+                "earn_drift"
+            ),
+            (pl.col("price_mom") / pl.col("index_mom")).alias("momentum_mom"),
+            (pl.col("price_qoq") / pl.col("index_qoq")).alias("momentum_qoq"),
+            (pl.col("price_yoy") / pl.col("index_yoy")).alias("momentum_yoy"),
+            (pl.col("price_2y") / pl.col("index_2y")).alias("momentum_2y"),
+            (pl.col("vol_mom") / pl.col("index_vol_mom")).alias("rel_vol_mom"),
+            (pl.col("vol_qoq") / pl.col("index_vol_qoq")).alias("rel_vol_qoq"),
+            (pl.col("vol_yoy") / pl.col("index_vol_yoy")).alias("rel_vol_yoy"),
+            (pl.col("niq").rolling_sum(4) / pl.col("cshoq")).over("tic").alias("eps"),
         )
         .with_columns(
-            [
-                (pl.col("close") / pl.col("eps")).alias("pe"),
-                (pl.col("close") * pl.col("cshoq")).alias("mkt_cap"),
-            ]
+            (pl.col("close") / pl.col("eps")).alias("pe"),
+            (pl.col("close") * pl.col("cshoq")).alias("mkt_cap"),
         )
         .with_columns(
             (pl.col("mkt_cap") + pl.col("ltq") - pl.col("cheq")).alias("ev"),
@@ -675,46 +666,56 @@ def compute_performance_targets(df: pl.DataFrame) -> pl.DataFrame:
     """
 
     df = df.with_columns(
-        [
+        (
             (
-                (
-                    pl.col("index_adj_close").shift(-PREDICTION_HORIZON)
-                    / pl.col("index_adj_close")
-                )
-                - 1
+                pl.col("index_adj_close").shift(-CONFIG["prediction_horizon"])
+                / pl.col("index_adj_close")
             )
-            .over("tic")
-            .alias("index_freturn"),
-            ((pl.col("adj_close").shift(-PREDICTION_HORIZON) / pl.col("adj_close")) - 1)
-            .over("tic")
-            .alias("freturn"),
-            ((pl.col("adj_close").shift(-1) / pl.col("adj_close")) - 1)
-            .over("tic")
-            .alias("freturn_1q"),
-            ((pl.col("adj_close").shift(-2) / pl.col("adj_close")) - 1)
-            .over("tic")
-            .alias("freturn_2q"),
-            ((pl.col("adj_close").shift(-3) / pl.col("adj_close")) - 1)
-            .over("tic")
-            .alias("freturn_3q"),
-            ((pl.col("adj_close").shift(-4) / pl.col("adj_close")) - 1)
-            .over("tic")
-            .alias("freturn_4q"),
-        ]
+            - 1
+        )
+        .over("tic")
+        .alias("index_freturn"),
+        (
+            (
+                pl.col("adj_close").shift(-CONFIG["prediction_horizon"])
+                / pl.col("adj_close")
+            )
+            - 1
+        )
+        .over("tic")
+        .alias("freturn"),
+        ((pl.col("adj_close").shift(-1) / pl.col("adj_close")) - 1)
+        .over("tic")
+        .alias("freturn_1q"),
+        ((pl.col("adj_close").shift(-2) / pl.col("adj_close")) - 1)
+        .over("tic")
+        .alias("freturn_2q"),
+        ((pl.col("adj_close").shift(-3) / pl.col("adj_close")) - 1)
+        .over("tic")
+        .alias("freturn_3q"),
+        ((pl.col("adj_close").shift(-4) / pl.col("adj_close")) - 1)
+        .over("tic")
+        .alias("freturn_4q"),
     )
     df = df.with_columns(
         (pl.col("freturn") - pl.col("index_freturn")).alias("adj_freturn")
     )
     df = df.with_columns(
-        [
-            (pl.col("adj_freturn") > OVER_PERFORMACE_THRES)
-            .cast(pl.Int8)
-            .alias("adj_fperf"),
-            (pl.col("freturn_1q") > PERFORMACE_THRES).cast(pl.Int8).alias("fperf_1q"),
-            (pl.col("freturn_2q") > PERFORMACE_THRES).cast(pl.Int8).alias("fperf_2q"),
-            (pl.col("freturn_3q") > PERFORMACE_THRES).cast(pl.Int8).alias("fperf_3q"),
-            (pl.col("freturn_4q") > PERFORMACE_THRES).cast(pl.Int8).alias("fperf_4q"),
-        ]
+        (pl.col("adj_freturn") > CONFIG["over_performance_threshold"])
+        .cast(pl.Int8)
+        .alias("adj_fperf"),
+        (pl.col("freturn_1q") > CONFIG["performance_threshold"])
+        .cast(pl.Int8)
+        .alias("fperf_1q"),
+        (pl.col("freturn_2q") > CONFIG["performance_threshold"])
+        .cast(pl.Int8)
+        .alias("fperf_2q"),
+        (pl.col("freturn_3q") > CONFIG["performance_threshold"])
+        .cast(pl.Int8)
+        .alias("fperf_3q"),
+        (pl.col("freturn_4q") > CONFIG["performance_threshold"])
+        .cast(pl.Int8)
+        .alias("fperf_4q"),
     ).with_columns(
         (
             (

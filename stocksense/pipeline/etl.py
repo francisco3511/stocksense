@@ -11,6 +11,9 @@ from database_handler import DatabaseHandler
 from config import get_config
 from .scraper import Scraper
 
+PACKAGE_DIR = Path(__file__).parents[1]
+DATA_PATH = PACKAGE_DIR / "data"
+
 
 class ETL:
     """
@@ -24,7 +27,7 @@ class ETL:
         self.db_fields = get_config("db")["schema"]
         self.base_date = get_config("scraping")["base_date"]
         self.fin_source = "yfinance"
-        self.historical_data_path = Path("data/interim/")
+        self.historical_data_path = DATA_PATH / "interim"
         self.stocks = stocks or self._set_default_stocks()
 
     def _set_default_stocks(self) -> list[str]:
@@ -438,7 +441,6 @@ class ETL:
         """
         try:
             insider_df = pl.read_csv(insider_file)
-
             insider_df = insider_df.with_columns(
                 pl.col("filling_date").str.to_datetime().dt.date(),
                 pl.col("trade_date").str.to_datetime().dt.date(),
@@ -464,7 +466,6 @@ class ETL:
         """
         try:
             financials_df = pl.read_csv(financials_file)
-
             financials_df = financials_df.with_columns(
                 pl.col("datadate").str.to_date("%Y-%m-%d"),
                 pl.col("rdq").str.to_date("%Y-%m-%d"),
