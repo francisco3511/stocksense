@@ -1,7 +1,6 @@
 import click
-
-from pipeline import ETL, Preprocess
 from model import ModelHandler
+from pipeline import ETL, Preprocess
 
 
 @click.command()

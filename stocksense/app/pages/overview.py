@@ -1,8 +1,7 @@
-import streamlit as st
 import numpy as np
 import pandas as pd
 import plotly.express as px
-
+import streamlit as st
 from database_handler import DatabaseHandler
 
 pd.set_option("future.no_silent_downcasting", True)

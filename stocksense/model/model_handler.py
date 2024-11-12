@@ -1,12 +1,13 @@
-import warnings
 import datetime as dt
-import polars as pl
+import warnings
 from pathlib import Path
+
+import polars as pl
+from config import get_config
 from loguru import logger
 
-from config import get_config
-from .xgboost_model import XGBoostModel
 from .genetic_algorithm import GeneticAlgorithm, fitness_function_wrapper
+from .xgboost_model import XGBoostModel
 
 PACKAGE_DIR = Path(__file__).parents[1]
 MODEL_PATH = PACKAGE_DIR / "models"
@@ -173,8 +174,7 @@ class ModelHandler:
             ).to_pandas()
 
             model_path = model_path = (
-                Path("models/") /
-                f"xgb_{self.last_trade_date}.pkl"
+                Path("models/") / f"xgb_{self.last_trade_date}.pkl"
             )
             model = XGBoostModel().load_model(model_path)
             model.predict_proba(test_df)

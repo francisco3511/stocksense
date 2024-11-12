@@ -1,7 +1,8 @@
-import polars as pl
 from sqlite3 import Connection, Error
-from loguru import logger
 from typing import Optional
+
+import polars as pl
+from loguru import logger
 
 
 def insert_data(connection: Connection, table_name: str, data: pl.DataFrame) -> None:

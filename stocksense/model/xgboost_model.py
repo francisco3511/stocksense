@@ -1,7 +1,7 @@
-import xgboost as xgb
 import pickle
-import sklearn.metrics as skm
 
+import sklearn.metrics as skm
+import xgboost as xgb
 from config import get_config
 
 

@@ -40,3 +40,30 @@ The stock classifier is trained using financial ratios and growth features deriv
    ```bash
    pip install .
    ```
+
+### Development Setup
+
+1. Install development dependencies:
+   ```bash
+   pip install -e ".[dev]"
+   ```
+
+2. Install pre-commit hooks:
+   ```bash
+   chmod +x scripts/install-hooks.sh
+   ./scripts/install-hooks.sh
+   ```
+This setup will:
+- Format your code using ruff
+- Run linting checks
+- Check for common issues like trailing whitespace and merge conflicts
+- Validate your YAML and TOML files
+- Run your pytest suite before each commit
+- Verify your poetry configuration
+
+The hooks will run automatically before each commit. If any checks fail, the commit will be blocked until you fix the issues.
+
+To manually run all pre-commit hooks on all files:
+```bash
+pre-commit run --all-files
+```

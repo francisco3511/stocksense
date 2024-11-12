@@ -1,15 +1,15 @@
-import requests
-import logging
-import polars as pl
 import datetime as dt
+import logging
+
+import polars as pl
+import requests
 import yfinance as yf
 from bs4 import BeautifulSoup as bs
+from config import get_config
+from pyrate_limiter import Duration, Limiter, RequestRate
 from requests import Session
 from requests_cache import CacheMixin, SQLiteCache
 from requests_ratelimiter import LimiterMixin, MemoryQueueBucket
-from pyrate_limiter import Duration, RequestRate, Limiter
-
-from config import get_config
 
 # Suppress logging from the yfinance and requests libraries
 logging.getLogger("yfinance").setLevel(logging.CRITICAL)

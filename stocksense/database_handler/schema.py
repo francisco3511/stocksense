@@ -1,4 +1,5 @@
 from sqlite3 import Connection, Error
+
 from loguru import logger
 
 
@@ -115,7 +116,7 @@ def create_tables(connection: Connection | None) -> None:
 
     try:
         cursor = connection.cursor()
-        for table_name, table_schema in tables.items():
+        for table_schema in tables.values():
             cursor.execute(table_schema)
         connection.commit()
         logger.success("Tables created successfully")

@@ -1,10 +1,10 @@
-import pygad
-import polars as pl
 import datetime as dt
-from loguru import logger
 
-from model import XGBoostModel
+import polars as pl
+import pygad
 from config import get_config
+from loguru import logger
+from model import XGBoostModel
 
 
 class GeneticAlgorithm:
@@ -28,9 +28,9 @@ class GeneticAlgorithm:
         self.init_range_high = init_range_high
         self.gene_space = gene_space
         self.ga_instance = None
-        self.no_improvement_count = 0
         self.best_fitness_value = 0
-        self.no_improvement_limit = 5
+        self.no_improv_count = 0
+        self.no_improv_limit = 5
         self.random_seed = get_config("model")["seed"]
 
     def create_instance(self):
@@ -68,13 +68,13 @@ class GeneticAlgorithm:
 
         if best_solution_fitness > self.best_fitness_value:
             self.best_fitness_value = best_solution_fitness
-            self.no_improvement_count = 0
+            self.no_improv_count = 0
         else:
-            self.no_improvement_count += 1
+            self.no_improv_count += 1
 
-        if self.no_improvement_count >= self.no_improvement_limit:
+        if self.no_improv_count >= self.no_improv_limit:
             print(
-                f"no improvement for {self.no_improvement_limit} generations. stopping GA."
+                f"no improvement for {self.no_improv_limit} generations, stopping GA."
             )
             ga_instance.terminate()
 

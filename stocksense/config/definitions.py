@@ -1,4 +1,5 @@
 import os.path
+
 import yaml
 
 ROOT_PATH = os.path.realpath(os.path.join(os.path.dirname(__file__), ".."))

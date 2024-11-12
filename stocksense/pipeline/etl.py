@@ -1,14 +1,14 @@
+import datetime as dt
 import os
 from pathlib import Path
-import datetime as dt
-
-import polars as pl
-from loguru import logger
-from tqdm import tqdm
 from typing import Optional
 
-from database_handler import DatabaseHandler
+import polars as pl
 from config import get_config
+from database_handler import DatabaseHandler
+from loguru import logger
+from tqdm import tqdm
+
 from .scraper import Scraper
 
 PACKAGE_DIR = Path(__file__).parents[1]
@@ -22,7 +22,7 @@ class ETL:
     transformation and DB ingestion processes.
     """
 
-    def __init__(self, stocks: Optional[list[str]] = []):
+    def __init__(self, stocks: Optional[list[str]] = None):
         self.db = DatabaseHandler()
         self.db_schema = get_config("db")["schema"]
         self.base_date = get_config("scraping")["base_date"]

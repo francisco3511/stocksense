@@ -1,6 +1,7 @@
 import sqlite3
-from sqlite3 import Error
 from pathlib import Path
+from sqlite3 import Error
+
 from loguru import logger
 
 PACKAGE_DIR = Path(__file__).parents[1]

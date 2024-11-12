@@ -1,19 +1,18 @@
-import streamlit as st
-import polars as pl
-import pandas as pd
 import datetime as dt
 from pathlib import Path
 
-import plotly.graph_objects as go
+import pandas as pd
 import plotly.express as px
-from plotly.subplots import make_subplots
-
+import plotly.graph_objects as go
+import polars as pl
+import streamlit as st
 from database_handler import DatabaseHandler
+from plotly.subplots import make_subplots
 
 pd.options.mode.chained_assignment = None  # default='warn'
 
 MILLION = 1000000
-MARGIN = dict(l=0, r=10, b=10, t=25)
+MARGIN = {"l": 0, "r": 10, "b": 10, "t": 25}
 
 
 def list_stocks():
@@ -83,7 +82,8 @@ def display_stock_info(stock, info):
         st.markdown(f"**Volume**: {(info.loc[0, 'volume'])} M$")
         st.markdown(f"**Beta**: {(info.loc[0, 'beta']):.3f}")
         st.markdown(
-            f"**Enterprise Value**: {(info.loc[0, 'enterprise_value'] / MILLION):.2f} M$"
+            "**Enterprise Value**: "
+            f"{(info.loc[0, 'enterprise_value'] / MILLION):.2f} M$"
         )
         st.divider()
         st.markdown(f"**Trailing PE**: {(info.loc[0, 'fiftytwo_wc']):.2f}")
@@ -119,7 +119,7 @@ def plot_market_data(df, index_df):
         specs=[[{"secondary_y": True}], [{}]],
     )
 
-    fig.update_xaxes(rangebreaks=[dict(values=date_breaks(df))])
+    fig.update_xaxes(rangebreaks=[{"values": date_breaks(df)}])
     fig.add_trace(
         go.Scatter(
             x=df["date"],
@@ -194,7 +194,7 @@ def plot_financial_analysis(df):
         if col in df.columns:
             df[col] = df[col] * 100
 
-    ratio_vars = [col for col in df.columns[15:]]
+    ratio_vars = list(df.columns[15:])
     margins = st.multiselect(
         "Select metric",
         ratio_vars,
@@ -214,7 +214,7 @@ def plot_financial_analysis(df):
         height=400,
         template="plotly_dark",
         title_text="Financial Metric Overview",
-        margin=dict(l=10, r=10, t=30, b=10),
+        margin={"l": 10, "r": 10, "b": 10, "t": 30},
     )
     st.plotly_chart(fig, use_container_width=True, theme=None)
 

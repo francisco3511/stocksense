@@ -1,18 +1,18 @@
-import numpy as np
-import polars as pl
 import sqlite3
 from typing import Optional
 
+import numpy as np
+import polars as pl
 from database_handler import (
     DatabaseConnection,
+    count_data,
     create_tables,
+    delete_data,
+    delete_table,
+    fetch_data,
     insert_data,
     insert_record,
     update_data,
-    delete_data,
-    delete_table,
-    count_data,
-    fetch_data,
 )
 
 sqlite3.register_adapter(np.int32, int)
