@@ -24,7 +24,7 @@ class ETL:
 
     def __init__(self, stocks: Optional[list[str]] = []):
         self.db = DatabaseHandler()
-        self.db_fields = get_config("db")["schema"]
+        self.db_schema = get_config("db")["schema"]
         self.base_date = get_config("scraping")["base_date"]
         self.fin_source = "yfinance"
         self.historical_data_path = DATA_PATH / "interim"
@@ -58,7 +58,7 @@ class ETL:
                 pl.lit(1).alias("active"),
             ]
         )
-        self.db.insert_stock(stock_df[self.db_fields["stock"]])
+        self.db.insert_stock(stock_df[self.db_schema["stock"]])
 
     def update_index_listings(self) -> None:
         """
@@ -119,7 +119,7 @@ class ETL:
                         pl.lit(1).alias("active"),
                     ]
                 )
-                self.db.insert_stock(stock[self.db_fields["stock"]])
+                self.db.insert_stock(stock[self.db_schema["stock"]])
 
             logger.info(f"added {tic} to S&P500 index")
 
@@ -137,6 +137,7 @@ class ETL:
         if self.is_empty():
             raise ValueError("No stocks assigned for ETL process.")
         self.extract_sp_500()
+        self.extract_vix()
         self._extract_all_stocks()
 
     def extract_sp_500(self) -> None:
@@ -147,11 +148,24 @@ class ETL:
         try:
             scraper = Scraper("^GSPC", self.fin_source)
             data = scraper.get_market_data(self.base_date)
-            data = data.drop("tic")
-            self.db.insert_index_data(data)
+            self.db.insert_index_data(data[self.db_schema["sp500"]])
             logger.info("inserted S&P500 market data")
         except Exception:
             logger.error("S&P500 data extraction FAILED")
+        return
+
+    def extract_vix(self) -> None:
+        """
+        Retrieve updated daily VIX data.
+        """
+        logger.info("extracting VIX data")
+        try:
+            scraper = Scraper("^VIX", self.fin_source)
+            data = scraper.get_market_data(self.base_date)
+            self.db.insert_vix_data(data[self.db_schema["vix"]])
+            logger.info("inserted VIX market data")
+        except Exception:
+            logger.error("VIX data extraction FAILED")
         return
 
     def _extract_all_stocks(self) -> None:
@@ -257,7 +271,7 @@ class ETL:
             start_date = fin_data["datadate"].max()
         except Exception:
             # no past data available for stock
-            fin_data = pl.DataFrame(schema=self.db_fields["financial"])
+            fin_data = pl.DataFrame(schema=self.db_schema["financial"])
             start_date = dt.datetime.strptime(self.base_date, "%Y-%m-%d").date()
             logger.warning(f"{tic}: no past financial data found ({last_update})")
 
@@ -268,7 +282,7 @@ class ETL:
                 return False
 
             data = scraper.get_financial_data(start_date, end_date)
-            self.db.insert_financial_data(data[self.db_fields["financial"]])
+            self.db.insert_financial_data(data[self.db_schema["financial"]])
             self.db.update_stock(tic, {"last_update": end_date})
             logger.success(f"{tic}: updated financial data ({start_date}:{end_date})")
             return True
@@ -305,7 +319,7 @@ class ETL:
                     return False
 
             data = scraper.get_market_data(self.base_date)
-            self.db.insert_market_data(data[self.db_fields["market"]])
+            self.db.insert_market_data(data[self.db_schema["market"]])
             self.db.update_stock(tic, {"last_update": end_date})
             logger.success(f"{tic}: updated market data ({end_date})")
             return True
@@ -341,7 +355,7 @@ class ETL:
                     return False
 
             data = scraper.get_stock_insider_data()
-            self.db.insert_insider_data(data[self.db_fields["insider"]])
+            self.db.insert_insider_data(data[self.db_schema["insider"]])
             logger.success(f"{tic}: updated insider trading data ({end_date})")
             return True
         except Exception as e:
@@ -375,7 +389,7 @@ class ETL:
             pl.col("spx_status").cast(pl.Int16),
             pl.col("spx_status").cast(pl.Int16).alias("active"),
             pl.lit(parsed_date).alias("last_update"),
-        )[self.db_fields["stock"]]
+        )[self.db_schema["stock"]]
 
         self.db.insert_stock(index_df)
 
@@ -430,7 +444,7 @@ class ETL:
                     "Volume": "volume",
                 }
             )
-            market_df = market_df[self.db_fields["market"]]
+            market_df = market_df[self.db_schema["market"]]
             self.db.insert_market_data(market_df)
         except Exception:
             logger.warning(f"market data file for {tic} is empty.")
@@ -455,7 +469,7 @@ class ETL:
                     "Value": "value",
                 }
             )
-            insider_df = insider_df[self.db_fields["insider"]]
+            insider_df = insider_df[self.db_schema["insider"]]
             self.db.insert_insider_data(insider_df)
         except Exception:
             logger.warning(f"insider data file for {tic} is empty.")
@@ -471,7 +485,7 @@ class ETL:
                 pl.col("rdq").str.to_date("%Y-%m-%d"),
                 pl.lit(tic).alias("tic"),
             )
-            financials_df = financials_df[self.db_fields["financial"]]
+            financials_df = financials_df[self.db_schema["financial"]]
             self.db.insert_financial_data(financials_df)
         except Exception:
             logger.warning(f"financials data file for {tic} is empty.")

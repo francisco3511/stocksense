@@ -12,6 +12,8 @@ CONFIG = get_config("processing")
 PACKAGE_DIR = Path(__file__).parents[1]
 DATA_PATH = PACKAGE_DIR / "data"
 
+# TODO: compute volatility and risk features, compute Piotroski F-Score
+
 
 class Preprocess:
     """
@@ -51,23 +53,21 @@ class Preprocess:
 
         # compute index past returns
         index_df = index_df.with_columns(
-            [
-                pl.col("close")
-                .pct_change(CONFIG["month_trading_days"])
-                .alias("index_mom"),
-                pl.col("close")
-                .pct_change(CONFIG["quarter_trading_days"])
-                .alias("index_qoq"),
-                pl.col("close")
-                .pct_change(CONFIG["semester_trading_days"])
-                .alias("index_sos"),
-                pl.col("close")
-                .pct_change(CONFIG["year_trading_days"])
-                .alias("index_yoy"),
-                pl.col("close")
-                .pct_change(CONFIG["2year_trading_days"])
-                .alias("index_2y"),
-            ]
+            pl.col("close")
+            .pct_change(CONFIG["month_trading_days"])
+            .alias("index_mom"),
+            pl.col("close")
+            .pct_change(CONFIG["quarter_trading_days"])
+            .alias("index_qoq"),
+            pl.col("close")
+            .pct_change(CONFIG["semester_trading_days"])
+            .alias("index_sos"),
+            pl.col("close")
+            .pct_change(CONFIG["year_trading_days"])
+            .alias("index_yoy"),
+            pl.col("close")
+            .pct_change(CONFIG["2year_trading_days"])
+            .alias("index_2y"),
         )
 
         # compute volatily of index
@@ -91,33 +91,29 @@ class Preprocess:
             .alias("index_vol_2y"),
         )
 
-        index_df = index_df.rename(
-            {
-                "date": "index_date",
-                "close": "index_close",
-                "adj_close": "index_adj_close",
-            }
-        )
+        index_df = index_df.rename({
+            "date": "index_date",
+            "close": "index_close",
+            "adj_close": "index_adj_close",
+        })
 
         logger.success(f"S&P500 index data {index_df.shape[0]} rows PROCESSED")
 
-        return index_df.select(
-            [
-                "index_date",
-                "index_close",
-                "index_adj_close",
-                "index_mom",
-                "index_qoq",
-                "index_sos",
-                "index_yoy",
-                "index_2y",
-                "index_vol_mom",
-                "index_vol_qoq",
-                "index_vol_sos",
-                "index_vol_yoy",
-                "index_vol_2y",
-            ]
-        )
+        return index_df.select([
+            "index_date",
+            "index_close",
+            "index_adj_close",
+            "index_mom",
+            "index_qoq",
+            "index_sos",
+            "index_yoy",
+            "index_2y",
+            "index_vol_mom",
+            "index_vol_qoq",
+            "index_vol_sos",
+            "index_vol_yoy",
+            "index_vol_2y",
+        ])
 
     def feature_engineering(self) -> pl.DataFrame:
         """

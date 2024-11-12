@@ -56,6 +56,33 @@ def delete_data(connection: Connection, table_name: str, condition: dict) -> Non
         logger.error(f"Error deleting data from table {table_name}: {e}")
 
 
+def delete_table(connection: Connection, table_name: str) -> bool:
+    """
+    Delete a table from the database.
+
+    Parameters
+    ----------
+    connection : Connection
+        Database connection object.
+    table_name : str
+        Name of table to delete.
+
+    Returns
+    -------
+    bool
+        True if successful, False otherwise.
+    """
+    try:
+        cursor = connection.cursor()
+        cursor.execute(f"DROP TABLE IF EXISTS {table_name}")
+        connection.commit()
+        logger.info(f"Successfully deleted table {table_name}")
+        return True
+    except Error as e:
+        logger.error(f"Error deleting table {table_name}: {e}")
+        return False
+
+
 def count_data(connection: Connection, table_name: str, column: str) -> Optional[int]:
     try:
         sql = f"SELECT COUNT(DISTINCT {column}) FROM {table_name}"

@@ -55,7 +55,9 @@ class ModelHandler:
             )
             scale = self.get_dataset_imbalance_scale(train_df)
             aux_cols = ["datadate", "rdq", "sector"]
-            train_df = train_df.select([c for c in train_df.columns if c not in aux_cols])
+            train_df = train_df.select(
+                [c for c in train_df.columns if c not in aux_cols]
+            )
 
             ga = GeneticAlgorithm(
                 num_generations=50,
@@ -105,7 +107,7 @@ class ModelHandler:
                 "scale_pos_weight": scale,
                 "eval_metric": "logloss",
                 "nthread": -1,
-                "seed": self.seed
+                "seed": self.seed,
             }
 
             X_train = train_df.select(
@@ -134,17 +136,21 @@ class ModelHandler:
             Class imbalance scale.
         """
         return int(
-            len(train_df.filter(
-                (pl.col(self.target_col) == 0) &
-                (pl.col("tdq").dt.year() >= self.train_start) &
-                (pl.col("tdq").dt.year() < self.train_start + self.train_window)
+            len(
+                train_df.filter(
+                    (pl.col(self.target_col) == 0)
+                    & (pl.col("tdq").dt.year() >= self.train_start)
+                    & (pl.col("tdq").dt.year() < self.train_start + self.train_window)
+                )
             )
-        ) / len(train_df.filter(
-                (pl.col(self.target_col) == 1) &
-                (pl.col("tdq").dt.year() >= self.train_start) &
-                (pl.col("tdq").dt.year() < self.train_start + self.train_window)
+            / len(
+                train_df.filter(
+                    (pl.col(self.target_col) == 1)
+                    & (pl.col("tdq").dt.year() >= self.train_start)
+                    & (pl.col("tdq").dt.year() < self.train_start + self.train_window)
+                )
             )
-        ))
+        )
 
     def score(self, data):
         """
@@ -167,7 +173,8 @@ class ModelHandler:
             ).to_pandas()
 
             model_path = model_path = (
-                Path("models/") / f"xgb_{self.last_trade_date}.pkl"
+                Path("models/") /
+                f"xgb_{self.last_trade_date}.pkl"
             )
             model = XGBoostModel().load_model(model_path)
             model.predict_proba(test_df)

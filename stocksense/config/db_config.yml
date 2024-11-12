@@ -78,5 +78,7 @@
     'sp500':
         - 'date'
         - 'close'
-        - 'adj_close'
         - 'volume'
+    'vix':
+        - 'date'
+        - 'close'

@@ -102,8 +102,13 @@ def create_tables(connection: Connection | None) -> None:
             CREATE TABLE IF NOT EXISTS sp500 (
                 date TEXT PRIMARY KEY,
                 close REAL,
-                adj_close REAL,
                 volume INTEGER
+            )
+        """,
+        "vix": """
+            CREATE TABLE IF NOT EXISTS vix (
+                date TEXT PRIMARY KEY,
+                close REAL
             )
         """,
     }

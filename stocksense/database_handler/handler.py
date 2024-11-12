@@ -10,6 +10,7 @@ from database_handler import (
     insert_record,
     update_data,
     delete_data,
+    delete_table,
     count_data,
     fetch_data,
 )
@@ -54,6 +55,11 @@ class DatabaseHandler:
         data = convert_date_columns_to_str(data, ["date"])
         conn = self.db.get_connection()
         insert_data(conn, "sp500", data)
+
+    def insert_vix_data(self, data: pl.DataFrame) -> None:
+        data = convert_date_columns_to_str(data, ["date"])
+        conn = self.db.get_connection()
+        insert_data(conn, "vix", data)
 
     def delete_stock(self, tic: str) -> None:
         conn = self.db.get_connection()
@@ -119,6 +125,18 @@ class DatabaseHandler:
             return pl.DataFrame()
         df = convert_str_columns_to_date(df, ["date"])
         return df
+
+    def fetch_vix_data(self) -> pl.DataFrame:
+        conn = self.db.get_connection()
+        df = fetch_data(conn, "vix")
+        if df is None:
+            return pl.DataFrame()
+        df = convert_str_columns_to_date(df, ["date"])
+        return df
+
+    def delete_table(self, table_name: str) -> bool:
+        conn = self.db.get_connection()
+        return delete_table(conn, table_name)
 
     def close(self):
         self.db.close()
