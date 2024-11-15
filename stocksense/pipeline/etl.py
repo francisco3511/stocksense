@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Optional
 
 import polars as pl
-from config import get_config
+from config import config
 from database_handler import DatabaseHandler
 from loguru import logger
 from tqdm import tqdm
@@ -24,8 +24,8 @@ class ETL:
 
     def __init__(self, stocks: Optional[list[str]] = None):
         self.db = DatabaseHandler()
-        self.db_schema = get_config("db")["schema"]
-        self.base_date = get_config("scraping")["base_date"]
+        self.db_schema = config.database.db_schema
+        self.base_date = config.scraping.base_date
         self.fin_source = "yfinance"
         self.historical_data_path = DATA_PATH / "interim"
         self.stocks = stocks or self._set_default_stocks()
@@ -72,9 +72,7 @@ class ETL:
         self._update_delisted_symbols(stock_df, active_df)
         self._add_new_symbols(stock_df, active_df)
 
-    def _update_delisted_symbols(
-        self, stock_df: pl.DataFrame, active_df: pl.DataFrame
-    ) -> None:
+    def _update_delisted_symbols(self, stock_df: pl.DataFrame, active_df: pl.DataFrame) -> None:
         """
         Downgrade delisted symbols from S&P500.
 
@@ -242,9 +240,7 @@ class ETL:
             logger.error(f"{tic}: info extraction FAILED")
             return False
 
-    def extract_fundamental_data(
-        self, tic: str, scraper: Scraper, last_update: dt.date
-    ) -> bool:
+    def extract_fundamental_data(self, tic: str, scraper: Scraper, last_update: dt.date) -> bool:
         """
         Extract financial statement data and update database
         financials table.

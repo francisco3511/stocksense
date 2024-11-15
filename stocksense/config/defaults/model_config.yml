@@ -3,7 +3,9 @@
     - 'n_purch'
     - 'n_sales'
     - 'insider_balance'
-    # growth, momentum and volatility features
+    # market momentum and volatility features
+    - 'volume_ma20'
+    - 'volume_ma50'
     - 'price_mom'
     - 'price_qoq'
     - 'price_yoy'
@@ -23,6 +25,9 @@
     - 'momentum_qoq'
     - 'momentum_yoy'
     - 'momentum_2y'
+    - 'fear_ma30'
+    - 'high_fear'
+    - 'low_fear'
     # financial features
     - 'gpm'
     - 'roa'
@@ -46,6 +51,7 @@
     - 'pb'
     - 'ps'
     - 'ev_ebitda'
+    - 'f_score'
     # growth features
     - 'saleq_yoy'
     - 'saleq_2y'

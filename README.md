@@ -26,7 +26,6 @@ The stock classifier is trained using financial ratios and growth features deriv
 - **Model Training**: A classifier using GA-XGBoost with features including growth ratios, financial metrics, price momentum, and volatility.
 - **Streamlit App**: A web-based interface for exploring stock metrics, visualizing growth ratios, and viewing model predictions.
 - **SQLite Database**: Locally stored market, financials, insider trading and status data for historical and current S&P500 members.
-- **Pyproject-based Installation**: Easy setup using `pyproject.toml` for dependency management.
 
 ## Installation
 

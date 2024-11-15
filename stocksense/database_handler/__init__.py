@@ -1,6 +1,6 @@
-from database_handler.connection import DatabaseConnection
-from database_handler.handler import DatabaseHandler
-from database_handler.queries import (
+from .connection import DatabaseConnection
+from .handler import DatabaseHandler
+from .queries import (
     count_data,
     delete_data,
     delete_table,
@@ -10,7 +10,7 @@ from database_handler.queries import (
     insert_record,
     update_data,
 )
-from database_handler.schema import create_tables
+from .schema import create_tables
 
 __all__ = [
     "DatabaseConnection",

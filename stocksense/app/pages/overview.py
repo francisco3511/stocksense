@@ -26,12 +26,7 @@ def load_sp500_data():
 
     financials = db.fetch_financial_data().to_pandas()
     financials["rdq"] = pd.to_datetime(financials["rdq"])
-    financials = (
-        financials.sort_values("rdq", ascending=False)
-        .groupby("tic")
-        .first()
-        .reset_index()
-    )
+    financials = financials.sort_values("rdq", ascending=False).groupby("tic").first().reset_index()
     stock_df = stock_df.merge(financials, how="left", on="tic")
     return stock_df
 
@@ -72,9 +67,7 @@ def show_recent_earnings(data):
             "tic": "Stock",
             "rdq": st.column_config.DateColumn("Earnings Date", format="YYYY-MM-DD"),
             "sector": "Sector",
-            "curr_price": st.column_config.NumberColumn(
-                "Current Price", format="$%.2f"
-            ),
+            "curr_price": st.column_config.NumberColumn("Current Price", format="$%.2f"),
             "saleq": st.column_config.NumberColumn("Sales", format="$%.2f"),
             "surprise_pct": st.column_config.NumberColumn("Surprise %", format="$%.2f"),
         },

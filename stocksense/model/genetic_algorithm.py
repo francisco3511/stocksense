@@ -2,9 +2,10 @@ import datetime as dt
 
 import polars as pl
 import pygad
-from config import get_config
+from config import config
 from loguru import logger
-from model import XGBoostModel
+
+from .xgboost_model import XGBoostModel
 
 
 class GeneticAlgorithm:
@@ -31,7 +32,7 @@ class GeneticAlgorithm:
         self.best_fitness_value = 0
         self.no_improv_count = 0
         self.no_improv_limit = 5
-        self.random_seed = get_config("model")["seed"]
+        self.random_seed = config.model.seed
 
     def create_instance(self):
         logger.info("creating GA instance")
@@ -59,9 +60,7 @@ class GeneticAlgorithm:
         Callback function.
         """
 
-        best_solution, best_solution_fitness, best_solution_idx = (
-            ga_instance.best_solution()
-        )
+        best_solution, best_solution_fitness, best_solution_idx = ga_instance.best_solution()
         logger.info(f"generation {ga_instance.generations_completed}:")
         logger.info(f"\tbest solution: {best_solution}")
         logger.info(f"\tbest fitness: {best_solution_fitness}")
@@ -73,16 +72,12 @@ class GeneticAlgorithm:
             self.no_improv_count += 1
 
         if self.no_improv_count >= self.no_improv_limit:
-            print(
-                f"no improvement for {self.no_improv_limit} generations, stopping GA."
-            )
+            print(f"no improvement for {self.no_improv_limit} generations, stopping GA.")
             ga_instance.terminate()
 
     def train(self):
         if self.ga_instance is None:
-            raise Exception(
-                "GA instance is not created. Call create_instance() before training."
-            )
+            raise Exception("GA instance is not created. Call create_instance() before training.")
         self.ga_instance.run()
 
     def best_solution(self):
@@ -96,15 +91,12 @@ class GeneticAlgorithm:
     def plot_fitness(self):
         if self.ga_instance is None:
             raise Exception(
-                "GA instance is not created. "
-                "Call create_instance() before plotting fitness."
+                "GA instance is not created. " "Call create_instance() before plotting fitness."
             )
         self.ga_instance.plot_fitness()
 
 
-def get_train_val_split(
-    data: pl.DataFrame, start_year: int, train_window: int, val_window: int
-):
+def get_train_val_split(data: pl.DataFrame, start_year: int, train_window: int, val_window: int):
     """
     Split the dataset into training and validation sets,
     based on walk-forward validation strategy.
@@ -155,7 +147,7 @@ def fitness_function_wrapper(
             "scale_pos_weight": scale,
             "eval_metric": "logloss",
             "nthread": -1,
-            "seed": get_config("model")["seed"],
+            "seed": config.model.seed,
         }
 
         model = XGBoostModel(params)
@@ -163,9 +155,7 @@ def fitness_function_wrapper(
         window = train_window
         while start_year + window + val_window < dt.datetime.now().year - 1:
             train, val = get_train_val_split(data, start_year, window, val_window)
-            X_train = train.select(
-                pl.exclude([tic_col, target_col, date_col])
-            ).to_pandas()
+            X_train = train.select(pl.exclude([tic_col, target_col, date_col])).to_pandas()
             y_train = train.select(target_col).to_pandas().values.ravel()
             X_val = val.select(pl.exclude([tic_col, target_col, date_col])).to_pandas()
             y_val = val.select(target_col).to_pandas().values.ravel()

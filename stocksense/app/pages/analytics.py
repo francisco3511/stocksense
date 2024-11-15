@@ -48,8 +48,7 @@ def load_processed_data():
     csv_files = directory_path.glob("*.csv")
 
     date_files = [
-        (file, dt.datetime.strptime(file.stem.split("_")[-1], "%Y-%m-%d"))
-        for file in csv_files
+        (file, dt.datetime.strptime(file.stem.split("_")[-1], "%Y-%m-%d")) for file in csv_files
     ]
     if date_files:
         most_recent_file = max(date_files, key=lambda x: x[1])[0]
@@ -76,14 +75,11 @@ def display_stock_info(stock, info):
         st.markdown(f"**Sector**: {stock.loc[0, 'sector']}")
         st.markdown(f"**Last price**: {(info.loc[0, 'curr_price']):.2f} $")
         st.markdown(f"**Market Cap**: {(info.loc[0, 'market_cap'] / MILLION):.2f} M$")
-        st.markdown(
-            f"**Out. Shares**: {(info.loc[0, 'shares_outstanding'] / MILLION):.2f} M"
-        )
+        st.markdown(f"**Out. Shares**: {(info.loc[0, 'shares_outstanding'] / MILLION):.2f} M")
         st.markdown(f"**Volume**: {(info.loc[0, 'volume'])} M$")
         st.markdown(f"**Beta**: {(info.loc[0, 'beta']):.3f}")
         st.markdown(
-            "**Enterprise Value**: "
-            f"{(info.loc[0, 'enterprise_value'] / MILLION):.2f} M$"
+            "**Enterprise Value**: " f"{(info.loc[0, 'enterprise_value'] / MILLION):.2f} M$"
         )
         st.divider()
         st.markdown(f"**Trailing PE**: {(info.loc[0, 'fiftytwo_wc']):.2f}")
@@ -145,10 +141,7 @@ def plot_market_data(df, index_df):
             col=1,
         )
 
-    colors = [
-        "#27AE60" if dif >= 0 else "#B03A2E"
-        for dif in df["close"].diff().values.tolist()
-    ]
+    colors = ["#27AE60" if dif >= 0 else "#B03A2E" for dif in df["close"].diff().values.tolist()]
 
     fig.add_trace(
         go.Bar(x=df["date"], y=df["volume"], showlegend=False, marker_color=colors),
@@ -172,9 +165,7 @@ def plot_financial_data(df):
     """
     col = st.selectbox("Select", df.columns[3:], key="financial")
     fig = go.Figure()
-    fig.add_trace(
-        go.Bar(x=df["rdq"], y=df[col], name=f"{col}", marker_color="orangered")
-    )
+    fig.add_trace(go.Bar(x=df["rdq"], y=df[col], name=f"{col}", marker_color="orangered"))
     fig.update_layout(template="plotly_dark")
     st.plotly_chart(fig, use_container_width=True, theme=None)
 
@@ -224,9 +215,7 @@ def plot_insider_data(df):
     Plots scatter plot for insider trading data.
     """
 
-    df["value"] = (
-        df["value"].replace({r"\$": "", ",": ""}, regex=True).astype(float).abs()
-    )
+    df["value"] = df["value"].replace({r"\$": "", ",": ""}, regex=True).astype(float).abs()
 
     fig = px.scatter(
         df,
@@ -249,9 +238,7 @@ def plot_processed_data(df):
     """
     col = st.selectbox("Select", df.columns[15:], key="proc")
     fig = go.Figure()
-    fig.add_trace(
-        go.Bar(x=df["tdq"], y=df[col], name=f"{col}", marker_color="orangered")
-    )
+    fig.add_trace(go.Bar(x=df["tdq"], y=df[col], name=f"{col}", marker_color="orangered"))
     st.plotly_chart(fig, use_container_width=True)
 
 
@@ -311,16 +298,12 @@ def main():
     with tab1:
         display_stock_info(stock, info)
     with tab2:
-        mdf = market[
-            (market["date"] >= start_dates[selected_range])
-            & (market["date"] <= max_date)
-        ]
+        mdf = market[(market["date"] >= start_dates[selected_range]) & (market["date"] <= max_date)]
         idf = sp[(sp["date"] >= start_dates[selected_range]) & (sp["date"] <= max_date)]
         plot_market_data(mdf, idf)
     with tab3:
         fdf = financials.loc[
-            (financials["rdq"] >= start_dates[selected_range])
-            & (financials["rdq"] <= max_date)
+            (financials["rdq"] >= start_dates[selected_range]) & (financials["rdq"] <= max_date)
         ]
         plot_financial_data(fdf)
     with tab4:

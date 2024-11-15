@@ -1,6 +1,6 @@
 import click
 from model import ModelHandler
-from pipeline import ETL, Preprocess
+from pipeline import ETL, process_stock_data
 
 
 @click.command()
@@ -17,7 +17,7 @@ def main(update, train, score):
         etl_handler.update_index_listings()
         etl_handler.extract()
     if train:
-        data = Preprocess().run()
+        data = process_stock_data()
         handler = ModelHandler()
         handler.train(data)
     if score:

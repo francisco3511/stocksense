@@ -30,7 +30,8 @@ dependencies = [
     "watchdog",
     "ipykernel",
     "shap",
-    "pre-commit"
+    "pre-commit",
+    "pydantic"
 ]
 
 [project.optional-dependencies]
@@ -52,7 +53,7 @@ fail_under = 80
 where = ["stocksense"]
 
 [tool.ruff]
-line-length = 88
+line-length = 100
 target-version = "py310"
 
 [tool.ruff.lint]

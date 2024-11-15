@@ -1,9 +1,0 @@
-'2week_trading_days': 10
-'month_trading_days': 21
-'quarter_trading_days': 61
-'semester_trading_days': 126
-'year_trading_days': 252
-'2year_trading_days': 504
-'prediction_horizon': 4
-'over_performance_threshold': 0.1
-'performance_threshold': 0.4

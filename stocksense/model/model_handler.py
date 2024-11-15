@@ -3,7 +3,7 @@ import warnings
 from pathlib import Path
 
 import polars as pl
-from config import get_config
+from config import config
 from loguru import logger
 
 from .genetic_algorithm import GeneticAlgorithm, fitness_function_wrapper
@@ -22,14 +22,13 @@ class ModelHandler:
     """
 
     def __init__(self):
-        model_settings = get_config("model")
-        self.id_col = model_settings["id_col"]
-        self.date_col = model_settings["date_col"]
-        self.target_col = model_settings["target"]
-        self.train_start = model_settings["train_start"]
-        self.train_window = model_settings["train_window"]
-        self.val_window = model_settings["val_window"]
-        self.seed = model_settings["seed"]
+        self.id_col = config.model.id_col
+        self.date_col = config.model.date_col
+        self.target_col = config.model.target
+        self.train_start = config.model.train_start
+        self.train_window = config.model.train_window
+        self.val_window = config.model.val_window
+        self.seed = config.model.seed
 
     def train(self, data: pl.DataFrame):
         """
@@ -41,24 +40,15 @@ class ModelHandler:
             Preprocessed financial data.
         """
         try:
-            if (
-                self.train_start + self.train_window + self.val_window
-                > dt.datetime.now().year - 1
-            ):
-                raise Exception("Window size overflow")
-
             trade_date = find_last_trading_date()
             logger.info(f"START training model - {trade_date}")
 
             train_df = data.filter(
-                (pl.col("tdq") < trade_date)
-                & ~pl.all_horizontal(pl.col(self.target_col).is_null())
+                (pl.col("tdq") < trade_date) & ~pl.all_horizontal(pl.col(self.target_col).is_null())
             )
             scale = self.get_dataset_imbalance_scale(train_df)
             aux_cols = ["datadate", "rdq", "sector"]
-            train_df = train_df.select(
-                [c for c in train_df.columns if c not in aux_cols]
-            )
+            train_df = train_df.select([c for c in train_df.columns if c not in aux_cols])
 
             ga = GeneticAlgorithm(
                 num_generations=50,
@@ -163,19 +153,13 @@ class ModelHandler:
             logger.info(f"START stocksense eval - {trade_date}")
 
             test_df = data.filter((pl.col("tdq") == trade_date))
-            test_df = test_df.filter(
-                ~pl.all_horizontal(pl.col(self.target_col).is_null())
-            )
+            test_df = test_df.filter(~pl.all_horizontal(pl.col(self.target_col).is_null()))
 
             aux_cols = ["datadate", "rdq", "tic", "sector", "freturn", "adj_freturn"]
             test_df = test_df.select([c for c in test_df.columns if c not in aux_cols])
-            test_df = test_df.select(
-                pl.exclude([self.target_col, self.date_col])
-            ).to_pandas()
+            test_df = test_df.select(pl.exclude([self.target_col, self.date_col])).to_pandas()
 
-            model_path = model_path = (
-                Path("models/") / f"xgb_{self.last_trade_date}.pkl"
-            )
+            model_path = model_path = Path("models/") / f"xgb_{self.last_trade_date}.pkl"
             model = XGBoostModel().load_model(model_path)
             model.predict_proba(test_df)
         except Exception:

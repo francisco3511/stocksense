@@ -5,7 +5,7 @@ import polars as pl
 import requests
 import yfinance as yf
 from bs4 import BeautifulSoup as bs
-from config import get_config
+from config import config
 from pyrate_limiter import Duration, Limiter, RequestRate
 from requests import Session
 from requests_cache import CacheMixin, SQLiteCache
@@ -57,9 +57,7 @@ class Scraper:
         Scrape daily market data for a stock, until present.
         """
         df = pl.from_pandas(
-            self.handler.history(start=start_date, auto_adjust=False).reset_index(
-                drop=False
-            )
+            self.handler.history(start=start_date, auto_adjust=False).reset_index(drop=False)
         )
 
         if df.is_empty():
@@ -89,7 +87,7 @@ class Scraper:
         if not data:
             raise Exception("No status information data available.")
 
-        fields = get_config("scraping")["yahoo_info"]
+        fields = config.scraping.yahoo_info
         record = dict.fromkeys(list(fields.values()), None)
         record["tic"] = self.tic
 
@@ -111,7 +109,7 @@ class Scraper:
         :raises Exception: no financial records are available.
         :return pl.DataFrame: financial report data from yfinance.
         """
-        fields_to_keep = get_config("scraping")["yahoo"]
+        fields_to_keep = config.scraping.yahoo
 
         # retrieve 3 main financial documents
         is_df = pl.from_pandas(self.handler.quarterly_income_stmt.T.reset_index())
@@ -119,21 +117,13 @@ class Scraper:
         cf_df = pl.from_pandas(self.handler.quarterly_cashflow.T.reset_index())
 
         # parse dates
-        is_df = is_df.with_columns(pl.col("index").dt.date().alias("index")).sort(
-            "index"
-        )
-        bs_df = bs_df.with_columns(pl.col("index").dt.date().alias("index")).sort(
-            "index"
-        )
-        cf_df = cf_df.with_columns(pl.col("index").dt.date().alias("index")).sort(
-            "index"
-        )
+        is_df = is_df.with_columns(pl.col("index").dt.date().alias("index")).sort("index")
+        bs_df = bs_df.with_columns(pl.col("index").dt.date().alias("index")).sort("index")
+        cf_df = cf_df.with_columns(pl.col("index").dt.date().alias("index")).sort("index")
 
         df = is_df.join_asof(
             bs_df, on="index", strategy="backward", tolerance=dt.timedelta(days=30)
-        ).join_asof(
-            cf_df, on="index", strategy="backward", tolerance=dt.timedelta(days=30)
-        )
+        ).join_asof(cf_df, on="index", strategy="backward", tolerance=dt.timedelta(days=30))
 
         for c in list(fields_to_keep.keys()):
             if c not in df.columns:
@@ -145,9 +135,7 @@ class Scraper:
 
         df = df.select(list(fields_to_keep.keys()))
         df = df.rename(fields_to_keep)
-        df = df.filter(
-            (pl.col("datadate") > start_date) & (pl.col("datadate") <= end_date)
-        )
+        df = df.filter((pl.col("datadate") > start_date) & (pl.col("datadate") <= end_date))
 
         if df.is_empty():
             raise Exception("No financial data available for date interval.")
@@ -156,9 +144,7 @@ class Scraper:
             df = df.with_columns(pl.col(c).cast(pl.Float64))
             df = df.with_columns((pl.col(c) / 1000000).round(3).alias(c))
 
-        df = df.with_columns(
-            [(-pl.col("dvq")).alias("dvq"), (-pl.col("capxq")).alias("capxq")]
-        )
+        df = df.with_columns([(-pl.col("dvq")).alias("dvq"), (-pl.col("capxq")).alias("capxq")])
         df = df.unique(subset=["datadate"]).sort("datadate")
         df = df.with_columns(pl.lit(self.tic).alias("tic"))
         return df
@@ -169,9 +155,7 @@ class Scraper:
         """
         n_quarters = int((end_date - start_date).days / 90) + 20
 
-        df = pl.from_pandas(
-            self.handler.get_earnings_dates(limit=n_quarters).reset_index()
-        )
+        df = pl.from_pandas(self.handler.get_earnings_dates(limit=n_quarters).reset_index())
 
         df = df.rename({"Earnings Date": "rdq", "Surprise(%)": "surprise_pct"})
 
@@ -179,11 +163,7 @@ class Scraper:
         df = df.select(["rdq", "surprise_pct"])
         df = df.with_columns(pl.col("rdq").dt.date())
         df = df.filter((pl.col("rdq") >= start_date) & (pl.col("rdq") <= end_date))
-        df = (
-            df.unique(subset=["rdq"])
-            .sort("rdq")
-            .drop_nulls(subset=["surprise_pct", "rdq"])
-        )
+        df = df.unique(subset=["rdq"]).sort("rdq").drop_nulls(subset=["surprise_pct", "rdq"])
 
         if df.is_empty():
             raise Exception("No financial release date available for date interval.")
@@ -302,9 +282,7 @@ class Scraper:
 
             df = df.with_columns(
                 [
-                    pl.col("filling_date")
-                    .str.to_datetime("%Y-%m-%d %H:%M:%S")
-                    .dt.date(),
+                    pl.col("filling_date").str.to_datetime("%Y-%m-%d %H:%M:%S").dt.date(),
                     pl.col("trade_date").str.to_date("%Y-%m-%d"),
                 ]
             )
@@ -367,9 +345,7 @@ class Scraper:
             )
             data = r.json()["data"]
             df = pl.DataFrame(data["rows"])
-            df = df.filter(pl.col("marketCap") != "0.00").select(
-                ["symbol", "name", "sector"]
-            )
+            df = df.filter(pl.col("marketCap") != "0.00").select(["symbol", "name", "sector"])
             df = df.filter(~pl.col("symbol").str.contains(r"\.|\^"))
             stock_list.append(df)
         return pl.concat(stock_list).unique(subset=["symbol"])

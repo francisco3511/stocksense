@@ -1,8 +1,8 @@
-from config import get_config
+from config import config
 
 
 def test_config():
-    values = get_config("scraping")["base_date"]
+    values = config.scraping.base_date
     assert values == "2005-01-01"
 
 

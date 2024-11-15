@@ -2,7 +2,7 @@ import pickle
 
 import sklearn.metrics as skm
 import xgboost as xgb
-from config import get_config
+from config import config
 
 
 class XGBoostModel:
@@ -24,7 +24,7 @@ class XGBoostModel:
                 "scale_pos_weight": scale,
                 "eval_metric": "logloss",
                 "nthread": -1,
-                "seed": get_config("model")["seed"],
+                "seed": config.model.seed,
             }
         )
         self.model = None
@@ -35,16 +35,12 @@ class XGBoostModel:
 
     def predict(self, X):
         if self.model is None:
-            raise Exception(
-                "Model is not trained yet. Train the model before predicting."
-            )
+            raise Exception("Model is not trained yet. Train the model before predicting.")
         return self.model.predict(X)
 
     def predict_proba(self, X):
         if self.model is None:
-            raise Exception(
-                "Model is not trained yet. Train the model before predicting."
-            )
+            raise Exception("Model is not trained yet. Train the model before predicting.")
         return self.model.predict_proba(X)[:, 1]
 
     def evaluate(self, X_test, y_test):

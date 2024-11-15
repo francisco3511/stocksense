@@ -1,4 +1,4 @@
-'schema':
+'db_schema':
     'stock':
         - 'tic'
         - 'name'

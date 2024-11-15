@@ -3,10 +3,10 @@ from typing import Optional
 
 import numpy as np
 import polars as pl
-from database_handler import (
-    DatabaseConnection,
+
+from .connection import DatabaseConnection
+from .queries import (
     count_data,
-    create_tables,
     delete_data,
     delete_table,
     fetch_data,
@@ -14,6 +14,7 @@ from database_handler import (
     insert_record,
     update_data,
 )
+from .schema import create_tables
 
 sqlite3.register_adapter(np.int32, int)
 sqlite3.register_adapter(np.int64, int)
@@ -147,6 +148,4 @@ def convert_date_columns_to_str(df, cols, date_format="%Y-%m-%d") -> pl.DataFram
 
 
 def convert_str_columns_to_date(df, cols, date_format="%Y-%m-%d") -> pl.DataFrame:
-    return df.with_columns(
-        [pl.col(col).str.to_date(format=date_format) for col in cols]
-    )
+    return df.with_columns([pl.col(col).str.to_date(format=date_format) for col in cols])
