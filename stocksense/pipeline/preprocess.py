@@ -4,9 +4,10 @@ from pathlib import Path
 import numpy as np
 import polars as pl
 import polars_talib as plta
-from config import config
-from database_handler import DatabaseHandler
 from loguru import logger
+
+from stocksense.config import config
+from stocksense.database_handler import DatabaseHandler
 
 DATA_PATH = Path(__file__).parents[1] / "data"
 FIXTURE_PATH = Path(__file__).parents[2] / "tests" / "fixtures"

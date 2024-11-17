@@ -1,6 +1,7 @@
 import click
-from model import ModelHandler
-from pipeline import ETL, clean, engineer_features
+
+from stocksense.model import ModelHandler
+from stocksense.pipeline import ETL, clean, engineer_features
 
 
 @click.command()

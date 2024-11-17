@@ -1,9 +1,9 @@
 import datetime as dt
 
 import polars as pl
-from config import config
 from polars.testing import assert_frame_equal
 
+from stocksense.config import config
 from stocksense.pipeline.preprocess import (
     clean,
     compute_trade_date,

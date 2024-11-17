@@ -1,4 +1,4 @@
-from config import config
+from stocksense.config import config
 
 
 def test_config():

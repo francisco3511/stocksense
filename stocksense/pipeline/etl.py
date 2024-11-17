@@ -4,10 +4,11 @@ from pathlib import Path
 from typing import Optional
 
 import polars as pl
-from config import config
-from database_handler import DatabaseHandler
 from loguru import logger
 from tqdm import tqdm
+
+from stocksense.config import config
+from stocksense.database_handler import DatabaseHandler
 
 from .scraper import Scraper
 

@@ -5,11 +5,12 @@ import polars as pl
 import requests
 import yfinance as yf
 from bs4 import BeautifulSoup as bs
-from config import config
 from pyrate_limiter import Duration, Limiter, RequestRate
 from requests import Session
 from requests_cache import CacheMixin, SQLiteCache
 from requests_ratelimiter import LimiterMixin, MemoryQueueBucket
+
+from stocksense.config import config
 
 # Suppress logging from the yfinance and requests libraries
 logging.getLogger("yfinance").setLevel(logging.CRITICAL)

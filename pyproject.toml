@@ -12,7 +12,7 @@ dependencies = [
     "requests",
     "PyYAML",
     "numpy",
-    "polars",
+    "polars<1.13.0",
     "loguru",
     "tqdm",
     "streamlit",
@@ -49,8 +49,8 @@ omit = [
 [tool.coverage.report]
 fail_under = 80
 
-[tool.setuptools.packages.find]
-where = ["stocksense"]
+[tool.setuptools]
+packages = ["stocksense"]
 
 [tool.ruff]
 line-length = 100
