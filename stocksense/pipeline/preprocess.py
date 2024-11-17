@@ -8,13 +8,11 @@ from config import config
 from database_handler import DatabaseHandler
 from loguru import logger
 
-PACKAGE_DIR = Path(__file__).parents[1]
-DATA_PATH = PACKAGE_DIR / "data"
-
-# TODO: compute Piotroski F-Score
+DATA_PATH = Path(__file__).parents[1] / "data"
+FIXTURE_PATH = Path(__file__).parents[2] / "tests" / "fixtures"
 
 
-def process_stock_data() -> pl.DataFrame:
+def engineer_features() -> pl.DataFrame:
     """
     Runs main data processing pipeline.
     """
@@ -42,13 +40,53 @@ def process_stock_data() -> pl.DataFrame:
         df = compute_growth_features(df)
         df = compute_piotroski_score(df)
         df = compute_performance_targets(df)
-        df = df.join(info.select(["tic", "sector"]), on="tic", how="left")
-        df = clean_data(df)
+        df = compute_sector_dummies(df, info)
 
         logger.success(f"END {df.shape[1]} features PROCESSED")
     except Exception as e:
         logger.error(f"FAILED processing stock data: {e}")
         raise e
+    return df
+
+
+def clean(df: pl.DataFrame) -> pl.DataFrame:
+    """
+    Clean the data by removing rows with missing values.
+
+    Parameters
+    ----------
+    data : pl.DataFrame
+        Financial features dataset.
+
+    Returns
+    -------
+    pl.DataFrame
+        Filtered and processed data.
+    """
+
+    logger.info("START cleaning data")
+
+    df = df.filter(pl.col("tdq") <= pl.lit(dt.datetime.today().date()))
+    growth_alias = ["mom", "sos", "qoq", "yoy", "2y", "return"]
+    growth_vars = [f for f in df.columns if any(xf in f for xf in growth_alias)]
+    df = df.filter(~pl.all_horizontal(pl.col("niq_2y").is_null()))
+
+    for feature in [f for f in df.columns if any(xf in f for xf in growth_vars)]:
+        df = df.with_columns(pl.col(feature) * 100)
+        df = df.with_columns(df.with_columns(pl.col(feature).clip(-1000, 1000)))
+
+    float_cols = df.select(pl.col(pl.Float64)).columns
+    df = df.with_columns(
+        [
+            pl.col(col)
+            .replace(float("inf"), float("nan"))
+            .replace(float("-inf"), float("nan"))
+            .alias(col)
+            for col in float_cols
+        ]
+    )
+
+    logger.success(f"{df.shape[0]} rows retained after CLEANING")
     return df
 
 
@@ -142,7 +180,7 @@ def adjust_shares(df: pl.DataFrame) -> pl.DataFrame:
 
     # apply the cumulative adjustment to the financial data
     df = df.with_columns((pl.col("cshoq") * pl.col("cum_adjustment_factor")).alias("cshoq"))
-
+    df = df.with_columns(pl.col("stock_split").cast(pl.Int8))
     df = df.sort(by=["tic", "tdq"])
     return df.drop(["csho_ratio", "split_factor", "adjustment_factor", "cum_adjustment_factor"])
 
@@ -159,7 +197,7 @@ def compute_insider_purchases(df: pl.DataFrame, insider_df: pl.DataFrame) -> pl.
         insider_filtered_lazy, how="inner", left_on=["tic"], right_on=["tic"]
     ).filter(
         (pl.col("filling_date") < pl.col("tdq"))
-        & (pl.col("filling_date") >= pl.col("tdq").dt.offset_by("-12mo"))
+        & (pl.col("filling_date") >= pl.col("tdq").dt.offset_by("-3mo"))
     )
     df_agg_lazy = df_filtered_lazy.group_by(["tic", "tdq"]).agg(
         [
@@ -194,7 +232,7 @@ def compute_insider_sales(df: pl.DataFrame, insider_df: pl.DataFrame) -> pl.Data
         insider_filtered_lazy, how="inner", left_on=["tic"], right_on=["tic"]
     ).filter(
         (pl.col("filling_date") < pl.col("tdq"))
-        & (pl.col("filling_date") >= pl.col("tdq").dt.offset_by("-12mo"))
+        & (pl.col("filling_date") >= pl.col("tdq").dt.offset_by("-3mo"))
     )
 
     df_agg_lazy = df_filtered_lazy.group_by(["tic", "tdq"]).agg(
@@ -259,6 +297,7 @@ def compute_financial_features(df: pl.DataFrame) -> pl.DataFrame:
         df.lazy()
         .with_columns(
             (pl.col("niq").rolling_sum(4) / pl.col("atq")).over("tic").alias("roa"),
+            (pl.col("niq") / pl.col("icaptq")).over("tic").alias("roi"),
             (pl.col("niq").rolling_sum(4) / pl.col("seqq")).over("tic").alias("roe"),
             ((pl.col("saleq") - pl.col("cogsq")) / pl.col("saleq")).alias("gpm"),
             (pl.col("ebitdaq") / pl.col("saleq")).alias("ebitdam"),
@@ -427,9 +466,11 @@ def compute_market_features(
         strategy="backward",
         tolerance=dt.timedelta(days=7),
     ).join_asof(
-        market_df.select(["date", "tic", "close"]).rename({"close": "rdq_close"}),
+        market_df.select(["date", "tic", "close"]).rename(
+            {"date": "rdq_date", "close": "rdq_close"}
+        ),
         left_on="rdq",
-        right_on="date",
+        right_on="rdq_date",
         by="tic",
         strategy="forward",
         tolerance=dt.timedelta(days=7),
@@ -445,8 +486,8 @@ def compute_volume_features(df: pl.DataFrame) -> pl.DataFrame:
     Compute volume features.
     """
     return df.with_columns(
-        pl.col("volume").rolling_mean(20).over("tic").alias("volume_ma20"),
-        pl.col("volume").rolling_mean(50).over("tic").alias("volume_ma50"),
+        (pl.col("volume").rolling_mean(20) / 1000000).over("tic").alias("volume_ma20"),
+        (pl.col("volume").rolling_mean(50) / 1000000).over("tic").alias("volume_ma50"),
     )
 
 
@@ -567,32 +608,7 @@ def compute_hybrid_features(df: pl.DataFrame) -> pl.DataFrame:
 
 def _compute_growth_rate(col: str, periods: int, suffix: str) -> pl.Expr:
     """
-    Compute growth rate for a given column over specified periods.
-
-    Parameters
-    ----------
-    col : str
-        Column name to compute growth for
-    periods : int
-        Number of periods to shift (e.g., 1 for QoQ, 4 for YoY)
-    suffix : str
-        Suffix for the output column name (e.g., 'qoq', 'yoy')
-
-    Returns
-    -------
-    pl.Expr
-        Polars expression for the growth calculation
-    """
-    return (
-        ((pl.col(col) - pl.col(col).shift(periods)) / pl.col(col).shift(periods).abs())
-        .over("tic")
-        .alias(f"{col}_{suffix}")
-    )
-
-
-def _compute_signed_growth_rate(col: str, periods: int, suffix: str) -> pl.Expr:
-    """
-    Compute signed growth rate for columns that can be negative.
+    Compute growth rate between lagged value and current value.
 
     Parameters
     ----------
@@ -606,14 +622,10 @@ def _compute_signed_growth_rate(col: str, periods: int, suffix: str) -> pl.Expr:
     Returns
     -------
     pl.Expr
-        Polars expression for the signed growth calculation
+        Polars expression for the growth calculation
     """
     return (
-        (
-            (pl.col(col) - pl.col(col).shift(periods)).sign()
-            * (pl.col(col) - pl.col(col).shift(periods))
-            / pl.col(col).shift(periods).abs()
-        )
+        ((pl.col(col) - pl.col(col).shift(periods)) / pl.col(col).shift(periods).abs())
         .over("tic")
         .alias(f"{col}_{suffix}")
     )
@@ -634,48 +646,42 @@ def compute_growth_features(df: pl.DataFrame) -> pl.DataFrame:
         Data with additional growth ratio columns.
     """
 
-    QUARTER = 1
-    YEAR = 4
-    TWO_YEAR = 8
+    quarter_lag = 1
+    year_lag = 4
+    two_year_lag = 8
 
-    signed_metrics = {"niq": [YEAR, TWO_YEAR]}  # Can have negative values
-
-    standard_metrics = {
-        "saleq": [YEAR, TWO_YEAR],
-        "ltq": [QUARTER, YEAR, TWO_YEAR],
-        "dlttq": [YEAR],
-        "gpm": [QUARTER, YEAR],
-        "roa": [QUARTER, YEAR],
-        "roe": [QUARTER, YEAR],
-        "fcf": [QUARTER, YEAR],
-        "cr": [QUARTER, YEAR],
-        "qr": [QUARTER, YEAR],
-        "der": [QUARTER, YEAR],
-        "dr": [QUARTER, YEAR],
-        "ltda": [YEAR],
-        "pe": [QUARTER, YEAR],
-        "pb": [QUARTER, YEAR],
-        "ps": [QUARTER, YEAR],
-        "eps": [QUARTER, YEAR],
-        "ev_ebitda": [QUARTER, YEAR],
-        "ltcr": [YEAR],
-        "itr": [YEAR],
-        "rtr": [YEAR],
-        "atr": [YEAR],
+    metrics = {
+        "niq": [quarter_lag, year_lag, two_year_lag],
+        "saleq": [year_lag, two_year_lag],
+        "ltq": [quarter_lag, year_lag, two_year_lag],
+        "dlttq": [year_lag, two_year_lag],
+        "gpm": [year_lag, two_year_lag],
+        "roa": [quarter_lag, year_lag],
+        "roi": [quarter_lag, year_lag],
+        "roe": [quarter_lag, year_lag],
+        "fcf": [year_lag, two_year_lag],
+        "cr": [year_lag, two_year_lag],
+        "qr": [year_lag, two_year_lag],
+        "der": [year_lag, two_year_lag],
+        "dr": [year_lag, two_year_lag],
+        "ltda": [year_lag, two_year_lag],
+        "pe": [year_lag, two_year_lag],
+        "pb": [year_lag, two_year_lag],
+        "ps": [year_lag, two_year_lag],
+        "eps": [year_lag, two_year_lag],
+        "ev_ebitda": [year_lag, two_year_lag],
+        "ltcr": [year_lag],
+        "itr": [year_lag],
+        "rtr": [year_lag],
+        "atr": [year_lag],
     }
 
     expressions = []
 
-    # add signed growth calculations
-    for metric, periods in signed_metrics.items():
-        for period in periods:
-            suffix = "qoq" if period == QUARTER else "yoy" if period == YEAR else "2y"
-            expressions.append(_compute_signed_growth_rate(metric, period, suffix))
-
     # add standard growth calculations
-    for metric, periods in standard_metrics.items():
+    for metric, periods in metrics.items():
         for period in periods:
-            suffix = "qoq" if period == QUARTER else "yoy" if period == YEAR else "2y"
+            suffix = "qoq" if period == quarter_lag else "yoy" if period == year_lag else "2y"
             expressions.append(_compute_growth_rate(metric, period, suffix))
 
     return df.lazy().with_columns(expressions).collect()
@@ -727,6 +733,10 @@ def compute_piotroski_score(df: pl.DataFrame) -> pl.DataFrame:
                 + pl.col("f_dturn")
             ).alias("f_score")
         ]
+    )
+    df = df.with_columns(
+        (pl.col("f_score") - pl.col("f_score").shift(1)).over("tic").alias("f_score_gr1"),
+        (pl.col("f_score") - pl.col("f_score").shift(4)).over("tic").alias("f_score_gr4"),
     )
     component_cols = [
         "f_roa",
@@ -800,48 +810,25 @@ def compute_performance_targets(df: pl.DataFrame) -> pl.DataFrame:
         .cast(pl.Int8)
         .alias("fperf")
     )
-    return df
+    component_cols = [
+        "freturn_1q",
+        "freturn_2q",
+        "freturn_3q",
+        "freturn_4q",
+        "fperf_1q",
+        "fperf_2q",
+        "fperf_3q",
+        "fperf_4q",
+    ]
+    return df.drop(component_cols)
 
 
-def clean_data(data: pl.DataFrame) -> pl.DataFrame:
+def compute_sector_dummies(df: pl.DataFrame, info: pl.DataFrame) -> pl.DataFrame:
     """
-    Clean and process financial features dataset.
-
-    Parameters
-    ----------
-    data : pl.DataFrame
-        Financial features dataset.
-
-    Returns
-    -------
-    pl.DataFrame
-        Filtered and processed data.
+    Compute sector dummies.
     """
-
-    logger.info("START cleaning data")
-
-    df = data.filter(pl.col("tdq") <= pl.lit(dt.datetime.today().date()))
-    growth_alias = ["qoq", "yoy", "2y", "return"]
-    growth_vars = [f for f in df.columns if any(xf in f for xf in growth_alias)]
-    df = df.filter(~pl.all_horizontal(pl.col("niq_2y").is_null()))
+    df = df.join(info.select(["tic", "sector"]), on="tic", how="left")
     df = df.filter(pl.col("sector").is_in(config.processing.sectors))
-
-    for feature in [f for f in df.columns if any(xf in f for xf in growth_vars)]:
-        df = df.with_columns(df.with_columns(pl.col(feature).clip(-30, 30)))
-
-    float_cols = df.select(pl.col(pl.Float64)).columns
-    df = df.with_columns(
-        [
-            pl.col(col)
-            .replace(float("inf"), float("nan"))
-            .replace(float("-inf"), float("nan"))
-            .alias(col)
-            for col in float_cols
-        ]
-    )
-
-    df = df.with_columns([pl.col("freturn") * 100, pl.col("adj_freturn") * 100])
     df = df.to_dummies(columns=["sector"])
-
-    logger.success(f"{df.shape[0]} rows retained after CLEANING")
-    return df
+    df = df.sort(["tic", "tdq"])
+    return df.with_columns([pl.col(c).cast(pl.Int8) for c in df.columns if c.startswith("sector_")])

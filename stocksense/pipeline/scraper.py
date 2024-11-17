@@ -41,7 +41,7 @@ class Scraper:
         session = CachedLimiterSession(
             limiter=Limiter(RequestRate(2, Duration.SECOND * 5)),
             bucket_class=MemoryQueueBucket,
-            backend=SQLiteCache(f"data/cache/{self.source}.cache"),
+            backend=SQLiteCache(f"{self.source}.cache"),
         )
         session.headers["User-agent"] = "my-program/1.0"
         return session

@@ -35,7 +35,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest", "pytest-cov", "ruff", "nbqa"]
+dev = ["pytest", "pytest-cov", "ruff", "nbqa", "pytest-mock"]
 
 [build-system]
 requires = ["setuptools"]

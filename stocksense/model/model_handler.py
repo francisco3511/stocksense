@@ -24,7 +24,8 @@ class ModelHandler:
     def __init__(self):
         self.id_col = config.model.id_col
         self.date_col = config.model.date_col
-        self.target_col = config.model.target
+        self.features = config.model.features
+        self.target = config.model.target
         self.train_start = config.model.train_start
         self.train_window = config.model.train_window
         self.val_window = config.model.val_window
