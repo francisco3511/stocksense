@@ -5,21 +5,18 @@ from stocksense.pipeline import ETL
 
 
 def test_update_index_listings(mocker, mock_stock_data, mock_active_data):
-    etl = ETL(config)
-
-    # mock database
     mock_db = mocker.Mock()
     mock_db.fetch_stock.return_value = mock_stock_data
     mock_db.update_stock.return_value = True
     mock_db.insert_stock.return_value = True
-    etl.db = mock_db
+    mocker.patch("stocksense.pipeline.etl.DatabaseHandler", return_value=mock_db)
 
     # mock scraper
     mocker.patch(
         "stocksense.pipeline.scraper.Scraper.scrape_sp500_stock_info", return_value=mock_active_data
     )
 
-    # Run update
+    etl = ETL(config)
     etl.update_index_listings()
 
     # verify delisted stock was updated
