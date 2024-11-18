@@ -12,7 +12,6 @@ from requests_ratelimiter import LimiterMixin, MemoryQueueBucket
 
 from stocksense.config import config
 
-# Suppress logging from the yfinance and requests libraries
 logging.getLogger("yfinance").setLevel(logging.CRITICAL)
 
 
@@ -27,17 +26,20 @@ class Scraper:
     """
 
     def __init__(self, tic, source):
-        self.tic = tic
-        self.source = source
-        self.session = self._get_session()
+        self.tic: str = tic
+        self.source: str = source
+        self.session: CachedLimiterSession = self._get_session()
         if self.source == "yfinance":
-            self.handler = self._get_yfinance_handler()
+            self.handler: yf.Ticker = self._get_yfinance_handler()
 
     def _get_session(self):
         """
         Create session for yfinance queries.
 
-        :return CachedLimiterSession: Session object.
+        Returns
+        -------
+        CachedLimiterSession
+            Session object.
         """
         session = CachedLimiterSession(
             limiter=Limiter(RequestRate(2, Duration.SECOND * 5)),
@@ -80,8 +82,15 @@ class Scraper:
         """
         Scrape current info using yfinance.
 
-        :raises Exception: no info available.
-        :return dict: current stock info.
+        Returns
+        -------
+        dict
+            Current stock info.
+
+        Raises
+        ------
+        Exception
+            No info available.
         """
         data = self.handler.info
 
@@ -102,14 +111,27 @@ class Scraper:
         self, start_date: dt.date, end_date: dt.date
     ) -> pl.DataFrame:
         """
-        Scraps fundamental data from Yahoo Finance using yfinance lib, searching
+        Scrape fundamental data from Yahoo Finance using yfinance lib, searching
         for financial records released between two dates.
 
-        :param dt.date start_date: starting date.
-        :param dt.date end_date: ending date
-        :raises Exception: no financial records are available.
-        :return pl.DataFrame: financial report data from yfinance.
+        Parameters
+        ----------
+        start_date : dt.date
+            Starting date.
+        end_date : dt.date
+            Ending date.
+
+        Returns
+        -------
+        pl.DataFrame
+            Financial report data from yfinance.
+
+        Raises
+        ------
+        Exception
+            No financial data available for date interval.
         """
+
         fields_to_keep = config.scraping.yahoo
 
         # retrieve 3 main financial documents
@@ -128,11 +150,7 @@ class Scraper:
 
         for c in list(fields_to_keep.keys()):
             if c not in df.columns:
-                df = df.with_columns(
-                    [
-                        pl.lit(None).alias(c),
-                    ]
-                )
+                df = df.with_columns(pl.lit(None).alias(c))
 
         df = df.select(list(fields_to_keep.keys()))
         df = df.rename(fields_to_keep)
@@ -185,7 +203,6 @@ class Scraper:
         Scrape current stock info.
         """
         if self.source == "yfinance":
-            # scrape stock current info from yfinance
             return self._get_stock_info_yfinance()
         else:
             raise Exception("Other methods not implemented")
@@ -297,7 +314,7 @@ class Scraper:
         """
         List S&P500 stock info from wiki page and return Polars dataframe.
         """
-        resp = requests.get("http://en.wikipedia.org/wiki/List_of_S%26P_500_companies")
+        resp = requests.get("https://en.wikipedia.org/wiki/List_of_S%26P_500_companies")
         soup = bs(resp.text, "lxml")
         table = soup.find("table", id="constituents")
 

@@ -75,5 +75,5 @@ skip-magic-trailing-comma = false
 line-ending = "auto"
 
 [project.scripts]
-stocksense-app = "app.home:main"
-stocksense = "main:main"
+stocksense-app = "stocksense.app.home:main"
+stocksense = "stocksense.main:main"

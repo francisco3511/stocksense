@@ -2,8 +2,9 @@ import datetime as dt
 
 import polars as pl
 import pygad
-from config import config
 from loguru import logger
+
+from stocksense.config import config
 
 from .xgboost_model import XGBoostModel
 

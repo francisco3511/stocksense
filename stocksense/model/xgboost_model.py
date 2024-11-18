@@ -2,7 +2,6 @@ import pickle
 
 import sklearn.metrics as skm
 import xgboost as xgb
-from config import config
 
 
 class XGBoostModel:
@@ -24,7 +23,7 @@ class XGBoostModel:
                 "scale_pos_weight": scale,
                 "eval_metric": "logloss",
                 "nthread": -1,
-                "seed": config.model.seed,
+                "seed": 100,
             }
         )
         self.model = None

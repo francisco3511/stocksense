@@ -3,8 +3,9 @@ import warnings
 from pathlib import Path
 
 import polars as pl
-from config import config
 from loguru import logger
+
+from stocksense.config import config
 
 from .genetic_algorithm import GeneticAlgorithm, fitness_function_wrapper
 from .xgboost_model import XGBoostModel

@@ -1,5 +1,6 @@
 import click
 
+from stocksense.config import config
 from stocksense.model import ModelHandler
 from stocksense.pipeline import ETL, clean, engineer_features
 
@@ -14,7 +15,7 @@ def main(update, train, score):
     """
 
     if update:
-        etl_handler = ETL()
+        etl_handler = ETL(config, stocks=["AAPL"])
         etl_handler.update_index_listings()
         etl_handler.extract()
     if train:

@@ -7,7 +7,6 @@ import polars as pl
 from loguru import logger
 from tqdm import tqdm
 
-from stocksense.config import config
 from stocksense.database_handler import DatabaseHandler
 
 from .scraper import Scraper
@@ -23,13 +22,13 @@ class ETL:
     transformation and DB ingestion processes.
     """
 
-    def __init__(self, stocks: Optional[list[str]] = None):
-        self.db = DatabaseHandler()
-        self.db_schema = config.database.db_schema
-        self.base_date = config.scraping.base_date
-        self.fin_source = "yfinance"
-        self.historical_data_path = DATA_PATH / "interim"
-        self.stocks = stocks or self._set_default_stocks()
+    def __init__(self, config, stocks: Optional[list[str]] = None):
+        self.db: DatabaseHandler = DatabaseHandler()
+        self.db_schema: dict = config.database.db_schema
+        self.base_date: str = config.scraping.base_date
+        self.fin_source: str = "yfinance"
+        self.historical_data_path: Path = DATA_PATH / "interim"
+        self.stocks: list[str] = stocks or self._set_default_stocks()
 
     def _set_default_stocks(self) -> list[str]:
         """
@@ -137,7 +136,7 @@ class ETL:
             raise ValueError("No stocks assigned for ETL process.")
         self.extract_sp_500()
         self.extract_vix()
-        self._extract_all_stocks()
+        self.extract_all_stocks()
 
     def extract_sp_500(self) -> None:
         """
@@ -167,17 +166,17 @@ class ETL:
             logger.error("VIX data extraction FAILED")
         return
 
-    def _extract_all_stocks(self) -> None:
+    def extract_all_stocks(self) -> None:
         """
         Extract data for all assigned stocks.
         """
         pl_bar = tqdm(total=len(self.stocks), desc="Stock", leave=True)
         for tic in self.stocks:
-            self._extract_stock_data(tic)
+            self.extract_stock_data(tic)
             pl_bar.update(1)
         pl_bar.close()
 
-    def _extract_stock_data(self, tic: str) -> bool:
+    def extract_stock_data(self, tic: str) -> bool:
         """
         Extract updated data for a single stock, including market, financial and
         insider trading data. If no financial data is found for the last 2 years,

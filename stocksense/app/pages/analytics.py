@@ -1,13 +1,11 @@
-import datetime as dt
-from pathlib import Path
-
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
-import polars as pl
 import streamlit as st
-from database_handler import DatabaseHandler
 from plotly.subplots import make_subplots
+
+from stocksense.database_handler import DatabaseHandler
+from stocksense.pipeline import clean, engineer_features
 
 pd.options.mode.chained_assignment = None  # default='warn'
 
@@ -44,17 +42,9 @@ def load_processed_data():
     Read most recently processed dataset.
     """
 
-    directory_path = Path("data/1_work_data/processed")
-    csv_files = directory_path.glob("*.csv")
-
-    date_files = [
-        (file, dt.datetime.strptime(file.stem.split("_")[-1], "%Y-%m-%d")) for file in csv_files
-    ]
-    if date_files:
-        most_recent_file = max(date_files, key=lambda x: x[1])[0]
-        return pl.read_csv(most_recent_file, try_parse_dates=True).to_pandas()
-    else:
-        raise FileNotFoundError
+    data = engineer_features()
+    data = clean(data)
+    return data.to_pandas()
 
 
 @st.cache_data(show_spinner="Fetching stock data...", max_entries=10)
