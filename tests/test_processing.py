@@ -65,7 +65,7 @@ def test_feature_engineering(
     assert not result_processed.is_empty()
 
     # check key computed features are present
-    expected_features = config.model.features
+    expected_features = [f for f in config.model.features if not f.startswith("sector_")]
     assert all(feature in result_processed.columns for feature in expected_features)
 
     # verify data equality after reprocessing

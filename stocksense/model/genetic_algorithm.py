@@ -1,39 +1,32 @@
-import datetime as dt
-
 import polars as pl
 import pygad
 from loguru import logger
-
-from stocksense.config import config
 
 from .xgboost_model import XGBoostModel
 
 
 class GeneticAlgorithm:
-    def __init__(
-        self,
-        num_generations,
-        num_parents_mating,
-        sol_per_pop,
-        num_genes,
-        fitness_func,
-        init_range_low,
-        init_range_high,
-        gene_space,
-    ):
-        self.num_generations = num_generations
-        self.num_parents_mating = num_parents_mating
-        self.sol_per_pop = sol_per_pop
-        self.num_genes = num_genes
+    def __init__(self, ga_settings, fitness_func):
+        self.num_generations = ga_settings["num_generations"]
+        self.num_parents_mating = ga_settings["num_parents_mating"]
+        self.sol_per_pop = ga_settings["sol_per_pop"]
+        self.num_genes = ga_settings["num_genes"]
         self.fitness_func = fitness_func
-        self.init_range_low = init_range_low
-        self.init_range_high = init_range_high
-        self.gene_space = gene_space
+        self.init_range_low = ga_settings["init_range_low"]
+        self.init_range_high = ga_settings["init_range_high"]
+        self.gene_space = ga_settings["gene_space"]
+        self.mutation_percent_genes = ga_settings["mutation_percent_genes"]
+        self.crossover_probability = ga_settings["crossover_probability"]
+        self.parent_selection_type = ga_settings["parent_selection_type"]
+        self.keep_parents = ga_settings["keep_parents"]
+        self.mutation_type = ga_settings["mutation_type"]
+        self.crossover_type = ga_settings["crossover_type"]
+        self.initial_mutation_rate = ga_settings["mutation_percent_genes"]
+        self.mutation_percent_genes = self.initial_mutation_rate
         self.ga_instance = None
         self.best_fitness_value = 0
         self.no_improv_count = 0
         self.no_improv_limit = 5
-        self.random_seed = config.model.seed
 
     def create_instance(self):
         logger.info("creating GA instance")
@@ -46,14 +39,14 @@ class GeneticAlgorithm:
             init_range_low=self.init_range_low,
             init_range_high=self.init_range_high,
             gene_space=self.gene_space,
-            mutation_percent_genes=10,
-            crossover_probability=0.8,
-            parent_selection_type="tournament",
-            keep_parents=2,
-            mutation_type="random",
-            crossover_type="single_point",
+            mutation_percent_genes=self.mutation_percent_genes,
+            crossover_probability=self.crossover_probability,
+            parent_selection_type=self.parent_selection_type,
+            keep_parents=self.keep_parents,
+            mutation_type=self.mutation_type,
+            crossover_type=self.crossover_type,
             on_generation=self.on_generation,
-            parallel_processing=-1,
+            parallel_processing=["thread", 4],
         )
 
     def on_generation(self, ga_instance):
@@ -72,9 +65,16 @@ class GeneticAlgorithm:
         else:
             self.no_improv_count += 1
 
-        if self.no_improv_count >= self.no_improv_limit:
-            print(f"no improvement for {self.no_improv_limit} generations, stopping GA.")
-            ga_instance.terminate()
+        if self.no_improv_count > self.no_improv_limit:
+            logger.warning(f"no improvement for {self.no_improv_limit} generations, stopping GA.")
+            return "stop"
+        elif self.no_improv_count > 2:
+            self.mutation_percent_genes = min(50, self.mutation_percent_genes * 1.5)
+            logger.warning(f"increasing mutation rate to {self.mutation_percent_genes}")
+        else:
+            self.mutation_percent_genes = self.initial_mutation_rate
+
+        ga_instance.mutation_percent_genes = self.mutation_percent_genes
 
     def train(self):
         if self.ga_instance is None:
@@ -97,42 +97,53 @@ class GeneticAlgorithm:
         self.ga_instance.plot_fitness()
 
 
-def get_train_val_split(data: pl.DataFrame, start_year: int, train_window: int, val_window: int):
+def get_train_val_splits(data: pl.DataFrame, stocks: list[str], min_train_years: int = 5):
     """
-    Split the dataset into training and validation sets,
-    based on walk-forward validation strategy.
+    Generate training/validation splits using expanding window approach.
 
     Parameters
     ----------
     data : pl.DataFrame
         Training data to split.
-    start_year : int
-        Starting year of walk-forward split.
-    train_window : int
-        Walk-forward window size.
-    val_window : int
-        Evaluation window size.
+    stocks : list[str]
+        List of S&P 500 stocks to include in validation.
+    min_train_years : int
+        Minimum number of years required for training.
 
     Returns
     -------
-    tuple[pl.DataFrame]
-        Training and validation data.
+    list[tuple[pl.DataFrame]]
+        List of (train, validation) splits.
     """
+    # Get unique years in the dataset
+    years = data.select(pl.col("tdq").dt.year()).unique().sort("tdq").get_column("tdq").to_list()
 
-    train = data.filter(
-        (pl.col("tdq").dt.year() >= start_year)
-        & (pl.col("tdq").dt.year() < start_year + train_window)
-    )
-    val = data.filter(
-        (pl.col("tdq").dt.year() > start_year + train_window)
-        & (pl.col("tdq").dt.year() <= start_year + train_window + val_window)
-    )
-    return train, val
+    # Ensure we have enough years for training and 2 years of validation
+    if len(years) < min_train_years + 2:
+        raise ValueError(
+            f"Not enough years in dataset. Need at least {min_train_years + 2} years "
+            f"({min_train_years} for training, 2 for validation)."
+        )
+
+    splits = []
+    for i in range(len(years) - 3):
+        if i + 1 < min_train_years:
+            continue
+
+        train_years = years[: i + 1]
+        val_years = [years[i + 2], years[i + 3]]
+
+        train = data.filter(pl.col("tdq").dt.year().is_in(train_years))
+        val = data.filter(pl.col("tdq").dt.year().is_in(val_years) & pl.col("tic").is_in(stocks))
+
+        splits.append((train, val))
+
+    return splits
 
 
-def fitness_function_wrapper(
-    data, tic_col, date_col, target_col, start_year, train_window, val_window, scale
-):
+def fitness_function_wrapper(data, features, target, min_train_years, scale, evaluation_stocks):
+    splits = get_train_val_splits(data, evaluation_stocks, min_train_years)
+
     def fitness_function(ga_instance, solution, solution_idx):
         params = {
             "objective": "binary:logistic",
@@ -147,27 +158,23 @@ def fitness_function_wrapper(
             "reg_lambda": solution[8],
             "scale_pos_weight": scale,
             "eval_metric": "logloss",
-            "nthread": -1,
-            "seed": config.model.seed,
+            "nthread": 1,
+            "seed": 100,
         }
 
         model = XGBoostModel(params)
         perfs = []
-        window = train_window
-        while start_year + window + val_window < dt.datetime.now().year - 1:
-            train, val = get_train_val_split(data, start_year, window, val_window)
-            X_train = train.select(pl.exclude([tic_col, target_col, date_col])).to_pandas()
-            y_train = train.select(target_col).to_pandas().values.ravel()
-            X_val = val.select(pl.exclude([tic_col, target_col, date_col])).to_pandas()
-            y_val = val.select(target_col).to_pandas().values.ravel()
+
+        for train, val in splits:
+            X_train = train.select(features).to_pandas()
+            y_train = train.select(target).to_pandas().values.ravel()
+            X_val = val.select(features).to_pandas()
+            y_val = val.select(target).to_pandas().values.ravel()
 
             model.train(X_train, y_train)
-            perf = model.evaluate(X_val, y_val)["pr_auc"]
+            perf = model.pr_auc(X_val, y_val)
             perfs.append(perf)
-            window += 1
 
-        # average performance across all splits
-        avg_perf = sum(perfs) / len(perfs)
-        return avg_perf
+        return sum(perfs) / len(perfs)
 
     return fitness_function

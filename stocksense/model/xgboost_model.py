@@ -5,7 +5,7 @@ import xgboost as xgb
 
 
 class XGBoostModel:
-    def __init__(self, params=None, scale=1.0):
+    def __init__(self, params=None):
         self.params = (
             params
             if params
@@ -20,7 +20,7 @@ class XGBoostModel:
                 "colsample_bytree": 1,
                 "reg_alpha": 0,
                 "reg_lambda": 1,
-                "scale_pos_weight": scale,
+                "scale_pos_weight": 1.0,
                 "eval_metric": "logloss",
                 "nthread": -1,
                 "seed": 100,
@@ -53,12 +53,17 @@ class XGBoostModel:
             "f1": skm.f1_score(y_test, y_pred),
             "wf1": skm.f1_score(y_test, y_pred, average="weighted"),
             "rec": skm.recall_score(y_test, y_pred),
-            "roc_auc": skm.roc_auc_score(y_test, y_proba),
             "brier": skm.brier_score_loss(y_test, y_proba),
-            "pr_auc": skm.average_precision_score(y_test, y_proba),
         }
-
         return eval
+
+    def pr_auc(self, X_test, y_test):
+        y_proba = self.predict_proba(X_test)
+        return skm.average_precision_score(y_test, y_proba)
+
+    def roc_auc(self, X_test, y_test):
+        y_proba = self.predict_proba(X_test)
+        return skm.roc_auc_score(y_test, y_proba)
 
     def get_importance(self, importance_type="gain"):
         importance = self.model.get_booster().get_score(importance_type=importance_type)

@@ -33,17 +33,6 @@
     - 'roa'
     - 'roe'
     - 'ebitdam'
-    - 'cr'
-    - 'qr'
-    - 'csr'
-    - 'dr'
-    - 'debitda'
-    - 'ltda'
-    - 'ltcr'
-    - 'itr'
-    - 'rtr'
-    - 'atr'
-    - 'cfm'
     - 'size'
     # hybrid
     - 'earn_drift'
@@ -52,6 +41,8 @@
     - 'ps'
     - 'ev_ebitda'
     - 'f_score'
+    - 'f_score_gr1'
+    - 'f_score_gr4'
     # growth features
     - 'saleq_yoy'
     - 'saleq_2y'
@@ -61,23 +52,63 @@
     - 'ltq_2y'
     - 'dlttq_yoy'
     - 'gpm_yoy'
+    - 'gpm_2y'
     - 'roa_yoy'
+    - 'roa_2y'
+    - 'roi_yoy'
+    - 'roi_2y'
     - 'roe_yoy'
     - 'fcf_yoy'
     - 'cr_yoy'
     - 'qr_yoy'
     - 'der_yoy'
     - 'dr_yoy'
+    - 'dr_2y'
     - 'ltda_yoy'
     - 'ev_ebitda_yoy'
     - 'ltcr_yoy'
     - 'pe_yoy'
+    - 'pe_2y'
     - 'pb_yoy'
     - 'ps_yoy'
+    - 'atr_yoy'
+    # sector dummies
+    - 'sector_utilities'
+    - 'sector_health_care'
+    - 'sector_financials'
+    - 'sector_consumer_discretionary'
+    - 'sector_consumer_staples'
+    - 'sector_energy'
+    - 'sector_industrials'
+    - 'sector_information_technology'
+    - 'sector_communication_services'
+    - 'sector_materials'
+    - 'sector_real_estate'
 'target': 'fperf'
 'id_col': 'tic'
 'date_col': 'tdq'
-'train_start': 2007
-'train_window': 12
-'val_window': 2
-'seed': 100
+'min_train_years': 13
+'ga':
+    'num_generations': 100
+    'num_parents_mating': 10
+    'sol_per_pop': 100
+    'num_genes': 9
+    'mutation_percent_genes': 10
+    'crossover_probability': 0.8
+    'parent_selection_type': "tournament"
+    'keep_parents': 5
+    'mutation_type': "random"
+    'crossover_type': "single_point"
+    'init_range_low': [0.001, 50, 2, 1, 0, 0.5, 0.5, 0, 0]
+    'init_range_high': [0.5, 500, 10, 10, 5, 1, 1, 6, 6]
+    'gene_space': [
+        {"low": 0.001, "high": 0.5},
+        {"low": 50, "high": 500},
+        {"low": 2, "high": 10},
+        {"low": 1, "high": 10},
+        {"low": 0, "high": 5},
+        {"low": 0.5, "high": 1},
+        {"low": 0.5, "high": 1},
+        {"low": 0, "high": 6},
+        {"low": 0, "high": 6},
+    ]

@@ -43,7 +43,7 @@ def engineer_features() -> pl.DataFrame:
         df = compute_performance_targets(df)
         df = compute_sector_dummies(df, info)
 
-        logger.success(f"END {df.shape[1]} features PROCESSED")
+        logger.success(f"END {df.shape[0]} rows PROCESSED")
     except Exception as e:
         logger.error(f"FAILED processing stock data: {e}")
         raise e
@@ -70,11 +70,10 @@ def clean(df: pl.DataFrame) -> pl.DataFrame:
     df = df.filter(pl.col("tdq") <= pl.lit(dt.datetime.today().date()))
     growth_alias = ["mom", "sos", "qoq", "yoy", "2y", "return"]
     growth_vars = [f for f in df.columns if any(xf in f for xf in growth_alias)]
-    df = df.filter(~pl.all_horizontal(pl.col("niq_2y").is_null()))
 
     for feature in [f for f in df.columns if any(xf in f for xf in growth_vars)]:
         df = df.with_columns(pl.col(feature) * 100)
-        df = df.with_columns(df.with_columns(pl.col(feature).clip(-1000, 1000)))
+        df = df.with_columns(df.with_columns(pl.col(feature).clip(-2000, 2000)))
 
     float_cols = df.select(pl.col(pl.Float64)).columns
     df = df.with_columns(
@@ -86,6 +85,9 @@ def clean(df: pl.DataFrame) -> pl.DataFrame:
             for col in float_cols
         ]
     )
+    df = df.filter(~pl.all_horizontal(pl.col("niq_2y").is_null()))
+    df = df.sort(["tic", "tdq"]).unique(subset=["tic", "tdq"], keep="last", maintain_order=True)
+    df = df.sort(["tic", "rdq"])
 
     logger.success(f"{df.shape[0]} rows retained after CLEANING")
     return df
@@ -95,7 +97,25 @@ def compute_trade_date(df: pl.DataFrame) -> pl.DataFrame:
     """
     Compute trade date intervals, to be used as a proxy for quarters.
     These represent the financial observations in which models will be trained on.
+
+    Parameters
+    ----------
+    df : pl.DataFrame
+        Financial data of a given stock.
+
+    Returns
+    -------
+    pl.DataFrame
+        Data with trade date intervals.
     """
+
+    # correct rdq if it is the same as quarter end date
+    df = df.with_columns(
+        pl.when(pl.col("rdq") == pl.col("datadate"))
+        .then(pl.col("datadate") + pl.duration(days=90))
+        .otherwise(pl.col("rdq"))
+        .alias("rdq")
+    )
 
     min_year = df["rdq"].dt.year().min()
     max_year = df["rdq"].dt.year().max()
@@ -182,7 +202,7 @@ def adjust_shares(df: pl.DataFrame) -> pl.DataFrame:
     # apply the cumulative adjustment to the financial data
     df = df.with_columns((pl.col("cshoq") * pl.col("cum_adjustment_factor")).alias("cshoq"))
     df = df.with_columns(pl.col("stock_split").cast(pl.Int8))
-    df = df.sort(by=["tic", "tdq"])
+    df = df.sort(by=["tic", "rdq"])
     return df.drop(["csho_ratio", "split_factor", "adjustment_factor", "cum_adjustment_factor"])
 
 
@@ -294,6 +314,9 @@ def compute_financial_features(df: pl.DataFrame) -> pl.DataFrame:
     pl.DataFrame
         Data with additional columns.
     """
+    df = df.with_columns(
+        pl.when(pl.col("niq") == 0).then(pl.lit(None)).otherwise(pl.col("niq")).alias("niq")
+    )
     return (
         df.lazy()
         .with_columns(
@@ -394,14 +417,13 @@ def compute_sp500_features(df: pl.DataFrame, index_df: pl.DataFrame) -> pl.DataF
         strategy="backward",
         tolerance=dt.timedelta(days=7),
     )
-    return df.sort(by=["tic", "tdq"])
+    return df.sort(by=["tic", "rdq"])
 
 
 def compute_vix_features(df: pl.DataFrame, vix_df: pl.DataFrame) -> pl.DataFrame:
     """
     Process VIX data.
     """
-    logger.info("START processing VIX data")
 
     vix_df = vix_df.sort(by=["date"])
     df = df.sort(by=["tdq", "tic"])
@@ -430,7 +452,7 @@ def compute_vix_features(df: pl.DataFrame, vix_df: pl.DataFrame) -> pl.DataFrame
         strategy="backward",
         tolerance=dt.timedelta(days=7),
     )
-    return df.sort(by=["tic", "tdq"])
+    return df.sort(by=["tic", "rdq"])
 
 
 def compute_market_features(
@@ -476,7 +498,7 @@ def compute_market_features(
         strategy="forward",
         tolerance=dt.timedelta(days=7),
     )
-    df = df.sort(by=["tic", "tdq"])
+    df = df.sort(by=["tic", "rdq"])
 
     df = compute_hybrid_features(df)
     return df
@@ -484,12 +506,33 @@ def compute_market_features(
 
 def compute_volume_features(df: pl.DataFrame) -> pl.DataFrame:
     """
-    Compute volume features.
+    Compute normalized volume features.
+
+    Parameters
+    ----------
+    df : pl.DataFrame
+        Market data with volume information
+
+    Returns
+    -------
+    pl.DataFrame
+        DataFrame with normalized volume features
     """
-    return df.with_columns(
-        (pl.col("volume").rolling_mean(20) / 1000000).over("tic").alias("volume_ma20"),
-        (pl.col("volume").rolling_mean(50) / 1000000).over("tic").alias("volume_ma50"),
+    df = df.with_columns(
+        [
+            pl.col("volume").rolling_mean(20).over("tic").alias("volume_ma20_raw"),
+            pl.col("volume").rolling_mean(50).over("tic").alias("volume_ma50_raw"),
+            pl.col("volume").rolling_mean(252).over("tic").alias("volume_annual_mean"),
+        ]
     )
+
+    return df.with_columns(
+        [
+            (pl.col("volume_ma20_raw") / pl.col("volume_annual_mean") * 100).alias("volume_ma20"),
+            (pl.col("volume_ma50_raw") / pl.col("volume_annual_mean") * 100).alias("volume_ma50"),
+            (pl.col("volume") / pl.col("volume_annual_mean") * 100).alias("volume_ratio"),
+        ]
+    ).drop(["volume_ma20_raw", "volume_ma50_raw", "volume_annual_mean"])
 
 
 def compute_daily_momentum_features(df: pl.DataFrame) -> pl.DataFrame:
@@ -578,6 +621,7 @@ def compute_hybrid_features(df: pl.DataFrame) -> pl.DataFrame:
     pl.DataFrame
         Dataset with market/financial ratios.
     """
+    df = df.sort(by=["tic", "rdq"])
     return (
         df.with_columns(
             ((pl.col("close") - pl.col("rdq_close")) / pl.col("rdq_close") * 100).alias(
@@ -657,9 +701,9 @@ def compute_growth_features(df: pl.DataFrame) -> pl.DataFrame:
         "ltq": [quarter_lag, year_lag, two_year_lag],
         "dlttq": [year_lag, two_year_lag],
         "gpm": [year_lag, two_year_lag],
-        "roa": [quarter_lag, year_lag],
-        "roi": [quarter_lag, year_lag],
-        "roe": [quarter_lag, year_lag],
+        "roa": [year_lag, two_year_lag],
+        "roi": [year_lag, two_year_lag],
+        "roe": [year_lag, two_year_lag],
         "fcf": [year_lag, two_year_lag],
         "cr": [year_lag, two_year_lag],
         "qr": [year_lag, two_year_lag],
@@ -680,6 +724,7 @@ def compute_growth_features(df: pl.DataFrame) -> pl.DataFrame:
     expressions = []
 
     # add standard growth calculations
+    df = df.sort(by=["tic", "rdq"])
     for metric, periods in metrics.items():
         for period in periods:
             suffix = "qoq" if period == quarter_lag else "yoy" if period == year_lag else "2y"
@@ -767,7 +812,7 @@ def compute_performance_targets(df: pl.DataFrame) -> pl.DataFrame:
     pl.DataFrame
         Dataset with each observation associated to forward returns and flags.
     """
-
+    df = df.sort(["tic", "rdq"])
     df = df.with_columns(
         (
             (
@@ -831,5 +876,9 @@ def compute_sector_dummies(df: pl.DataFrame, info: pl.DataFrame) -> pl.DataFrame
     df = df.join(info.select(["tic", "sector"]), on="tic", how="left")
     df = df.filter(pl.col("sector").is_in(config.processing.sectors))
     df = df.to_dummies(columns=["sector"])
-    df = df.sort(["tic", "tdq"])
-    return df.with_columns([pl.col(c).cast(pl.Int8) for c in df.columns if c.startswith("sector_")])
+    df = df.sort(["tic", "rdq"])
+    df = df.with_columns([pl.col(c).cast(pl.Int8) for c in df.columns if c.startswith("sector_")])
+    df = df.rename(
+        {col: col.lower().replace(" ", "_") for col in df.columns if col.startswith("sector_")}
+    )
+    return df

@@ -86,6 +86,13 @@ class DatabaseHandler:
         df = convert_str_columns_to_date(df, ["last_update"])
         return df
 
+    def fetch_sp500_stocks(self) -> list[str]:
+        conn = self.db.get_connection()
+        df = fetch_data(conn, "stock")
+        if df is None:
+            return []
+        return df.filter(pl.col("spx_status") == 1)["tic"].to_list()
+
     def fetch_info(self, tic: Optional[str] = None) -> pl.DataFrame:
         conn = self.db.get_connection()
         df = fetch_data(conn, "info", {"tic": tic} if tic else None)

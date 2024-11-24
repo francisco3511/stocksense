@@ -1,6 +1,6 @@
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List
+from typing import Any, Dict, List
 
 import yaml
 from pydantic import (
@@ -78,10 +78,8 @@ class ModelConfig(BaseModel):
     target: str
     id_col: str
     date_col: str
-    train_start: int = Field(ge=2005, le=datetime.now().year)
-    train_window: int = Field(gt=0)
-    val_window: int = Field(gt=0)
-    seed: int = Field(ge=0)
+    min_train_years: int = Field(ge=10, le=20)
+    ga: Dict[str, Any]
 
     @model_validator(mode="after")
     def validate_column_names(self) -> "ModelConfig":
@@ -89,13 +87,6 @@ class ModelConfig(BaseModel):
         special_cols = [self.target, self.id_col, self.date_col]
         if any(col in self.features for col in special_cols):
             raise ValueError("features list cannot contain target, id_col or date_col")
-        return self
-
-    @model_validator(mode="after")
-    def validate_window_sizes(self) -> "ModelConfig":
-        """Validate that train_start + train_window + val_window is less than the current year."""
-        if self.train_start + self.train_window + self.val_window > datetime.now().year - 1:
-            raise ValueError("Window size overflow")
         return self
 
     @property

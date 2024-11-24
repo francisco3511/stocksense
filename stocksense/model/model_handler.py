@@ -1,17 +1,19 @@
 import datetime as dt
 import warnings
 from pathlib import Path
+from typing import List, Optional
 
 import polars as pl
 from loguru import logger
 
 from stocksense.config import config
+from stocksense.database_handler import DatabaseHandler
 
 from .genetic_algorithm import GeneticAlgorithm, fitness_function_wrapper
 from .xgboost_model import XGBoostModel
 
-PACKAGE_DIR = Path(__file__).parents[1]
-MODEL_PATH = PACKAGE_DIR / "models"
+MODEL_DIR = Path(__file__).parents[1] / "model" / "model_base"
+REPORT_DIR = Path(__file__).parents[2] / "reports"
 
 warnings.filterwarnings("ignore")
 
@@ -22,17 +24,14 @@ class ModelHandler:
     Basic handling for model training, evaluation and testing.
     """
 
-    def __init__(self):
-        self.id_col = config.model.id_col
-        self.date_col = config.model.date_col
+    def __init__(self, evaluation_stocks, trade_date: Optional[dt.datetime] = None):
         self.features = config.model.features
         self.target = config.model.target
-        self.train_start = config.model.train_start
-        self.train_window = config.model.train_window
-        self.val_window = config.model.val_window
-        self.seed = config.model.seed
+        self.min_train_years = config.model.min_train_years
+        self.evaluation_stocks = evaluation_stocks
+        self.trade_date = trade_date if trade_date else find_last_trading_date()
 
-    def train(self, data: pl.DataFrame):
+    def train(self, data: pl.DataFrame, retrain: bool = False):
         """
         Train and optimize GA-XGBoost model.
 
@@ -40,132 +39,136 @@ class ModelHandler:
         ----------
         data : pl.DataFrame
             Preprocessed financial data.
+        retrain : bool
+            Whether to retrain the model for given trade date.
         """
         try:
-            trade_date = find_last_trading_date()
-            logger.info(f"START training model - {trade_date}")
+            logger.info(f"START training model - {self.trade_date}")
 
-            train_df = data.filter(
-                (pl.col("tdq") < trade_date) & ~pl.all_horizontal(pl.col(self.target_col).is_null())
+            model_file = MODEL_DIR / f"{self.trade_date.date()}.pkl"
+            if model_file.exists() and not retrain:
+                logger.warning(f"Model already exists for {self.trade_date} - skipping training.")
+                return
+
+            train = data.filter(
+                (pl.col("tdq") < self.trade_date)
+                & ~pl.all_horizontal(pl.col(self.target).is_null())
             )
-            scale = self.get_dataset_imbalance_scale(train_df)
-            aux_cols = ["datadate", "rdq", "sector"]
-            train_df = train_df.select([c for c in train_df.columns if c not in aux_cols])
 
+            id_cols = ["tdq", "tic"]
+            training_fields = id_cols + self.features + [self.target]
+            train = train.select(training_fields)
+            scale = self.get_dataset_imbalance_scale(train)
+
+            # run GA optimization
             ga = GeneticAlgorithm(
-                num_generations=50,
-                num_parents_mating=10,
-                sol_per_pop=50,
-                num_genes=9,
+                ga_settings=config.model.ga,
                 fitness_func=fitness_function_wrapper(
-                    train_df,
-                    self.tic_col,
-                    self.date_col,
-                    self.target_col,
-                    self.train_start,
-                    self.train_window,
-                    self.val_window,
+                    train,
+                    self.features,
+                    self.target,
+                    self.min_train_years,
                     scale,
+                    self.evaluation_stocks,
                 ),
-                init_range_low=[0.001, 50, 2, 1, 0, 0.5, 0.5, 0, 0],
-                init_range_high=[0.5, 500, 12, 10, 10, 1, 1, 12, 12],
-                gene_space=[
-                    {"low": 0.001, "high": 0.5},
-                    {"low": 50, "high": 500},
-                    {"low": 2, "high": 12},
-                    {"low": 1, "high": 10},
-                    {"low": 0, "high": 10},
-                    {"low": 0.5, "high": 1},
-                    {"low": 0.5, "high": 1},
-                    {"low": 0, "high": 12},
-                    {"low": 0, "high": 12},
-                ],
             )
 
+            # run XGB-GA optimization
             ga.create_instance()
             ga.train()
             best_solution, best_solution_fitness, best_solution_idx = ga.best_solution()
 
-            params = {
-                "objective": "binary:logistic",
-                "learning_rate": best_solution[0],
-                "n_estimators": int(best_solution[1]),
-                "max_depth": int(best_solution[2]),
-                "min_child_weight": best_solution[3],
-                "gamma": best_solution[4],
-                "subsample": best_solution[5],
-                "colsample_bytree": best_solution[6],
-                "reg_alpha": best_solution[7],
-                "reg_lambda": best_solution[8],
-                "scale_pos_weight": scale,
-                "eval_metric": "logloss",
-                "nthread": -1,
-                "seed": self.seed,
-            }
+            # train final model with best params
+            params = format_parameters(best_solution, scale)
 
-            X_train = train_df.select(
-                pl.exclude([self.tic_col, self.target_col, self.date_col])
-            ).to_pandas()
-            y_train = train_df.select(self.target_col).to_pandas().values.ravel()
+            X_train = train.select(self.features).to_pandas()
+            y_train = train.select(self.target).to_pandas().values.ravel()
 
-            model = XGBoostModel(params, scale=scale)
+            model = XGBoostModel(params)
             model.train(X_train, y_train)
-            model.save_model(self.model_path / f"xgb_{trade_date}.pkl")
-        except Exception:
-            logger.error("ERROR: failed to train model.")
-
-    def get_dataset_imbalance_scale(self, train_df):
-        """
-        Compute dataset class imbalance scale.
-
-        Parameters
-        ----------
-        train_df : pl.DataFrame
-            Training dataset.
-
-        Returns
-        -------
-        int
-            Class imbalance scale.
-        """
-        return int(
-            len(
-                train_df.filter(
-                    (pl.col(self.target_col) == 0)
-                    & (pl.col("tdq").dt.year() >= self.train_start)
-                    & (pl.col("tdq").dt.year() < self.train_start + self.train_window)
-                )
-            )
-            / len(
-                train_df.filter(
-                    (pl.col(self.target_col) == 1)
-                    & (pl.col("tdq").dt.year() >= self.train_start)
-                    & (pl.col("tdq").dt.year() < self.train_start + self.train_window)
-                )
-            )
-        )
+            model.save_model(model_file)
+        except Exception as e:
+            logger.error(f"ERROR: failed to train model - {e}")
 
     def score(self, data):
         """
         Classify using sector-specific models.
         """
-
         try:
-            trade_date = find_last_trading_date()
-            logger.info(f"START stocksense eval - {trade_date}")
+            logger.info(f"START stocksense eval - {self.trade_date}")
 
-            test_df = data.filter((pl.col("tdq") == trade_date))
-            test_df = test_df.filter(~pl.all_horizontal(pl.col(self.target_col).is_null()))
+            model_file = MODEL_DIR / f"{self.trade_date.date()}.pkl"
+            if not model_file.exists():
+                raise FileNotFoundError(f"No model found for trade date {self.trade_date}")
 
-            aux_cols = ["datadate", "rdq", "tic", "sector", "freturn", "adj_freturn"]
-            test_df = test_df.select([c for c in test_df.columns if c not in aux_cols])
-            test_df = test_df.select(pl.exclude([self.target_col, self.date_col])).to_pandas()
+            test = data.filter(
+                (pl.col("tdq") == self.trade_date) & pl.col("tic").is_in(self.evaluation_stocks)
+            )
+            test_df = test.select(self.features).to_pandas()
 
-            model_path = model_path = Path("models/") / f"xgb_{self.last_trade_date}.pkl"
-            model = XGBoostModel().load_model(model_path)
-            model.predict_proba(test_df)
+            model = XGBoostModel()
+            model.load_model(model_file)
+            prob_scores = model.predict_proba(test_df)
+            test = test.with_columns(pl.Series("score", prob_scores))
+            self.save_scoring_report(test)
+            return
         except Exception:
             logger.error("ERROR: no model available.")
+            raise
+
+    def save_scoring_report(self, test_data: pl.DataFrame):
+        """
+        Save scoring report csv.
+
+        Parameters
+        ----------
+        test_data : pl.DataFrame
+            _description_
+        """
+        try:
+            logger.info("START saving scoring report")
+            report = test_data.select(["tic", "score", "freturn", "adj_freturn"]).sort(
+                "score", descending=True
+            )
+            report_file = REPORT_DIR / f"report_{self.trade_date.date()}.csv"
+            report.write_csv(report_file)
+            logger.success(f"END saved scoring report to {report_file}")
+        except Exception as e:
+            logger.error(f"ERROR failed to save scoring report - {e}")
+            raise
+
+    def backtest(self, data, trade_dates: List[dt.datetime]):
+        """
+        Train past models for backtesting.
+        """
+        for trade_date in trade_dates:
+            self.trade_date = trade_date
+            # self.train(data)
+            self.score(data)
+
+    def get_dataset_imbalance_scale(self, train: pl.DataFrame):
+        """
+        Compute dataset class imbalance scale.
+
+        Parameters
+        ----------
+        train : pl.DataFrame
+            Training dataset.
+
+        Returns
+        -------
+        float
+            Class imbalance scale.
+        """
+        min_year = pl.col("tdq").dt.year().min()
+        filtered_data = train.filter(pl.col("tdq").dt.year() < min_year + self.min_train_years)
+        neg_count = len(filtered_data.filter(pl.col(self.target) == 0))
+        pos_count = len(filtered_data.filter(pl.col(self.target) == 1))
+        return round(neg_count / pos_count, 2)
+
+
+def get_sp500_stocks():
+    return DatabaseHandler().fetch_stock().filter(pl.col("spx_status") == 1)["tic"].to_list()
 
 
 def find_last_trading_date():
@@ -193,3 +196,26 @@ def find_last_trading_date():
     else:
         logger.error("no trade dates found.")
         return None
+
+
+def format_parameters(solution: List[float], scale: float):
+    """
+    Format model parameters.
+    """
+    # train final model with best params
+    return {
+        "objective": "binary:logistic",
+        "learning_rate": solution[0],
+        "n_estimators": int(solution[1]),
+        "max_depth": int(solution[2]),
+        "min_child_weight": solution[3],
+        "gamma": solution[4],
+        "subsample": solution[5],
+        "colsample_bytree": solution[6],
+        "reg_alpha": solution[7],
+        "reg_lambda": solution[8],
+        "scale_pos_weight": scale,
+        "eval_metric": "logloss",
+        "nthread": -1,
+        "seed": 100,
+    }

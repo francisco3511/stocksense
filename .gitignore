@@ -170,3 +170,6 @@ log/
 # cache files
 *.cache
 .ruff_cache/
+
+# model files
+*.pkl
