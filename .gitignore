@@ -173,3 +173,6 @@ log/
 
 # model files
 *.pkl
+
+# reports
+reports/report_*

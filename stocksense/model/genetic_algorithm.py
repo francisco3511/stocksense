@@ -1,3 +1,4 @@
+import numpy as np
 import polars as pl
 import pygad
 from loguru import logger
@@ -97,6 +98,11 @@ class GeneticAlgorithm:
         self.ga_instance.plot_fitness()
 
 
+def top_k_precision(y_true, y_proba, k=100):
+    top_k_indices = np.argsort(y_proba)[-k:]
+    return np.mean(y_true[top_k_indices])
+
+
 def get_train_val_splits(data: pl.DataFrame, stocks: list[str], min_train_years: int = 5):
     """
     Generate training/validation splits using expanding window approach.
@@ -172,7 +178,9 @@ def fitness_function_wrapper(data, features, target, min_train_years, scale, eva
             y_val = val.select(target).to_pandas().values.ravel()
 
             model.train(X_train, y_train)
-            perf = model.pr_auc(X_val, y_val)
+            y_proba = model.predict_proba(X_val)
+
+            perf = top_k_precision(y_val, y_proba, k=100)
             perfs.append(perf)
 
         return sum(perfs) / len(perfs)

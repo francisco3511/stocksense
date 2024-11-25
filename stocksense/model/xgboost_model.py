@@ -65,6 +65,10 @@ class XGBoostModel:
         y_proba = self.predict_proba(X_test)
         return skm.roc_auc_score(y_test, y_proba)
 
+    def ndcg_score(self, X_test, y_test, k=None):
+        y_proba = self.predict_proba(X_test).reshape(1, -1)
+        return skm.ndcg_score(y_test.reshape(1, -1), y_proba, k=k)
+
     def get_importance(self, importance_type="gain"):
         importance = self.model.get_booster().get_score(importance_type=importance_type)
         return sorted(importance.items(), key=lambda x: x[1], reverse=True)

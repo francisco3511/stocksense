@@ -1,5 +1,3 @@
-from datetime import datetime
-
 import click
 
 from stocksense.config import config
@@ -18,8 +16,12 @@ def prepare_data():
 @click.option("-u", "--update", is_flag=True, help="Update stock data.")
 @click.option("-t", "--train", is_flag=True, help="Train model.")
 @click.option("-s", "--score", is_flag=True, help="Score stocks.")
-@click.option("-b", "--backtest", is_flag=True, help="Backtest model.")
-def main(update, train, score, backtest):
+@click.option(
+    "--trade-date",
+    type=click.DateTime(formats=["%Y-%m-%d"]),
+    help="Trade date for model operations (format: YYYY-MM-DD)",
+)
+def main(update, train, score, trade_date):
     """
     CLI handling.
     """
@@ -29,16 +31,14 @@ def main(update, train, score, backtest):
         etl_handler.update_index_listings()
         etl_handler.extract()
 
-    if any([train, score, backtest]):
+    if any([train, score]):
         data = prepare_data()
         stocks = DatabaseHandler().fetch_sp500_stocks()
-        handler = ModelHandler(stocks)
+        handler = ModelHandler(stocks, trade_date)
         if train:
             handler.train(data)
         if score:
             handler.score(data)
-        if backtest:
-            handler.backtest(data, [datetime(2023, 9, 1)])
 
 
 if __name__ == "__main__":
