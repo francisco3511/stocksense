@@ -137,15 +137,6 @@ class ModelHandler:
             logger.error(f"ERROR failed to save scoring report - {e}")
             raise
 
-    def backtest(self, data, trade_dates: List[dt.datetime]):
-        """
-        Train past models for backtesting.
-        """
-        for trade_date in trade_dates:
-            self.trade_date = trade_date
-            # self.train(data)
-            self.score(data)
-
     def get_dataset_imbalance_scale(self, train: pl.DataFrame):
         """
         Compute dataset class imbalance scale.
