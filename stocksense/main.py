@@ -16,12 +16,14 @@ def prepare_data():
 @click.option("-u", "--update", is_flag=True, help="Update stock data.")
 @click.option("-t", "--train", is_flag=True, help="Train model.")
 @click.option("-s", "--score", is_flag=True, help="Score stocks.")
+@click.option("-f", "--force", is_flag=True, default=False, help="Force model retraining.")
 @click.option(
+    "-tdq",
     "--trade-date",
     type=click.DateTime(formats=["%Y-%m-%d"]),
     help="Trade date for model operations (format: YYYY-MM-DD)",
 )
-def main(update, train, score, trade_date):
+def main(update, train, score, force, trade_date):
     """
     CLI handling.
     """
@@ -36,7 +38,7 @@ def main(update, train, score, trade_date):
         stocks = DatabaseHandler().fetch_sp500_stocks()
         handler = ModelHandler(stocks, trade_date)
         if train:
-            handler.train(data)
+            handler.train(data, retrain=force)
         if score:
             handler.score(data)
 

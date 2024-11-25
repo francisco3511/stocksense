@@ -136,7 +136,7 @@ def get_train_val_splits(data: pl.DataFrame, stocks: list[str], min_train_years:
         if i + 1 < min_train_years:
             continue
 
-        train_years = years[: i + 1]
+        train_years = years[: i + 2]
         val_years = [years[i + 2], years[i + 3]]
 
         train = data.filter(pl.col("tdq").dt.year().is_in(train_years))

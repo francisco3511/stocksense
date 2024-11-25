@@ -89,6 +89,7 @@ class ModelHandler:
             model.save_model(model_file)
         except Exception as e:
             logger.error(f"ERROR: failed to train model - {e}")
+            raise
 
     def score(self, data):
         """
