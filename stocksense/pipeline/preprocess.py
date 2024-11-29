@@ -882,3 +882,25 @@ def compute_sector_dummies(df: pl.DataFrame, info: pl.DataFrame) -> pl.DataFrame
         {col: col.lower().replace(" ", "_") for col in df.columns if col.startswith("sector_")}
     )
     return df
+
+
+def filter_active_stocks(df: pl.DataFrame, info: pl.DataFrame) -> pl.DataFrame:
+    """
+    Filter out stocks that are not active by removing data points after their removal date.
+
+    Parameters
+    ----------
+    df : pl.DataFrame
+        Main dataset.
+    info : pl.DataFrame
+        Stock info containing addition and removal dates.
+
+    Returns
+    -------
+    pl.DataFrame
+        Filtered dataset with only active periods for each stock.
+    """
+    df = df.join(info.select(["tic", "date_added", "date_removed"]), on="tic", how="left")
+    df = df.filter((pl.col("date_removed").is_null() | (pl.col("tdq") <= pl.col("date_removed"))))
+    df = df.drop(["date_added", "date_removed"])
+    return df.sort(["tic", "rdq"])

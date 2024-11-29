@@ -21,7 +21,10 @@ def prepare_data():
     "-tdq",
     "--trade-date",
     type=click.DateTime(formats=["%Y-%m-%d"]),
-    help="Trade date for model operations (format: YYYY-MM-DD)",
+    help=(
+        "Trade date for model operations (format: YYYY-MM-DD)."
+        "Must be the 1st of March, June, September or December."
+    ),
 )
 def main(update, train, score, force, trade_date):
     """
@@ -35,12 +38,12 @@ def main(update, train, score, force, trade_date):
 
     if any([train, score]):
         data = prepare_data()
-        stocks = DatabaseHandler().fetch_sp500_stocks()
-        handler = ModelHandler(stocks, trade_date)
+        constituents = DatabaseHandler().fetch_constituents(trade_date)
+        handler = ModelHandler(trade_date)
         if train:
-            handler.train(data, retrain=force)
+            handler.train(data, force)
         if score:
-            handler.score(data)
+            handler.score(data, constituents)
 
 
 if __name__ == "__main__":

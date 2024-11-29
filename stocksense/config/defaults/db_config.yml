@@ -3,9 +3,8 @@
         - 'tic'
         - 'name'
         - 'sector'
-        - 'last_update'
-        - 'spx_status'
-        - 'active'
+        - 'date_added'
+        - 'date_removed'
     'info':
         - 'tic'
         - 'risk'

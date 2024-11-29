@@ -43,22 +43,21 @@ class ETL:
         stock_data = self.db.fetch_stock()
         if stock_data.is_empty():
             self.set_index_listings()
-        return stock_data.filter(pl.col("spx_status") == 1)["tic"].to_list()
+
+        # fetch data S&P500 stocks and recent delisted stocks
+        stock_data = stock_data.filter(
+            pl.col("date_removed").is_null()
+            | (pl.col("date_removed") >= (dt.datetime.now().date() - dt.timedelta(days=360)))
+        )
+        return stock_data["tic"].to_list()
 
     def set_index_listings(self) -> None:
         """
         Set index stock control table.
         """
-        df = Scraper.scrape_sp500_stock_info()
-        parsed_date = dt.datetime.strptime(self.base_date, "%Y-%m-%d").date()
-        stock_df = df.with_columns(
-            [
-                pl.lit(parsed_date).alias("last_update"),
-                pl.lit(1).alias("spx_status"),
-                pl.lit(1).alias("active"),
-            ]
-        )
-        self.db.insert_stock(stock_df[self.db_schema["stock"]])
+        sp500_df = Scraper.scrape_sp500_constituents()
+        sp500_df = sp500_df.with_columns(pl.lit(None).alias("date_removed"))
+        self.db.insert_stock(sp500_df[self.db_schema["stock"]])
 
     def update_index_listings(self) -> None:
         """
@@ -67,59 +66,51 @@ class ETL:
         logger.info("updating S&P500 index listings")
 
         stock_df = self.db.fetch_stock()
-        active_df = Scraper.scrape_sp500_stock_info()
+        sp500_df = Scraper.scrape_sp500_constituents()
+        additions, removals = Scraper.scrape_sp500_changes()
 
-        self._update_delisted_symbols(stock_df, active_df)
-        self._add_new_symbols(stock_df, active_df)
+        last_constituents = stock_df.filter(pl.col("date_removed").is_null())["tic"].to_list()
+        current_constituents = sp500_df["tic"].to_list()
 
-    def _update_delisted_symbols(self, stock_df: pl.DataFrame, active_df: pl.DataFrame) -> None:
+        self._delist_stocks(last_constituents, current_constituents, removals)
+        self._add_new_stocks(last_constituents, sp500_df)
+
+    def _delist_stocks(
+        self, last_constituents: list[str], current_constituents: list[str], removals: pl.DataFrame
+    ) -> None:
         """
-        Downgrade delisted symbols from S&P500.
+        Flag stock as delisted.
 
         Parameters
         ----------
-        stock_df : pl.DataFrame
-            stock control table.
-        active_df : pl.DataFrame
-            current sp500 stocks and sectors.
+        last_constituents : list[str]
+            Last S&P500 constituents.
+        current_constituents : list[str]
+            Current S&P500 constituents.
+        removals : pl.DataFrame
+            S&P500 changes data.
         """
-        last_constituents = stock_df.filter(pl.col("spx_status") == 1)["tic"].to_list()
-        constituents = active_df["tic"].to_list()
+        removals_list = removals["tic"].to_list()
+        for tic in last_constituents:
+            if tic not in current_constituents:
+                if tic in removals_list:
+                    removed_date = dt.datetime.strptime(
+                        removals.filter(pl.col("name_removed") == tic)["removed"].to_list()[0],
+                        "%Y-%m-%d",
+                    ).date()
+                    self.db.update_stock(tic, {"date_removed": removed_date})
+                else:
+                    today = dt.datetime.now().date()
+                    self.db.update_stock(tic, {"date_removed": today})
+                logger.info(f"{tic}: delisted from S&P500")
+        return
 
-        for tic in [t for t in last_constituents if t not in constituents]:
-            self.db.update_stock(tic, {"spx_status": 0})
-            logger.info(f"{tic}: delisted from S&P500")
-
-    def _add_new_symbols(self, stock_df: pl.DataFrame, active_df: pl.DataFrame) -> None:
-        """
-        Adds new symbols to S&P500.
-
-        Parameters
-        ----------
-        stock_df : pl.DataFrame
-            Stock control table.
-        active_df : pl.DataFrame
-            Current sp500 stocks and sectors.
-        """
-        hist_constituents = stock_df["tic"].to_list()
-        last_constituents = stock_df.filter(pl.col("spx_status") == 1)["tic"].to_list()
-        constituents = active_df["tic"].to_list()
-
-        for tic in [t for t in constituents if t not in last_constituents]:
-            if tic in hist_constituents:
-                self.db.update_stock(tic, {"spx_status": 1, "active": 1})
-            else:
-                parsed_date = dt.datetime.strptime(self.base_date, "%Y-%m-%d").date()
-                stock = active_df.filter(pl.col("tic") == tic).with_columns(
-                    [
-                        pl.lit(parsed_date).alias("last_update"),
-                        pl.lit(1).alias("spx_status"),
-                        pl.lit(1).alias("active"),
-                    ]
-                )
-                self.db.insert_stock(stock[self.db_schema["stock"]])
-
-            logger.info(f"added {tic} to S&P500 index")
+    def _add_new_stocks(self, last_constituents: list[str], sp500_df: pl.DataFrame) -> None:
+        new_stocks = sp500_df.filter(~pl.col("tic").is_in(last_constituents))
+        new_stocks = new_stocks.with_columns(pl.lit(None).alias("date_removed"))
+        self.db.insert_stock(new_stocks[self.db_schema["stock"]])
+        logger.info(f"added {new_stocks['tic'].to_list()} to S&P500 index")
+        return
 
     def is_empty(self):
         """
@@ -195,20 +186,12 @@ class ETL:
         """
         logger.info(f"START {tic} stock data extraction")
 
-        try:
-            stock = self.db.fetch_stock(tic).row(0, named=True)
-            last_update = stock["last_update"]
-        except Exception:
-            logger.error(f"{tic}: no stock {tic} info available.")
+        if tic not in self.db.fetch_stock()["tic"].to_list():
+            logger.info(f"{tic}: not tracked.")
             return False
 
         scraper = Scraper(tic, self.fin_source)
-        if not self.extract_fundamental_data(tic, scraper, last_update):
-            if last_update.year < dt.datetime.now().year - 2:
-                self.db.update_stock(tic, {"active": 0})
-                logger.info(f"{tic}: flagged as inactive")
-                return False
-
+        self.extract_fundamental_data(tic, scraper)
         self.extract_info(tic, scraper)
         self.extract_market_data(tic, scraper)
         self.extract_insider_data(tic, scraper)
@@ -233,14 +216,13 @@ class ETL:
         try:
             info = scraper.get_stock_info()
             self.db.insert_info(info)
-            self.db.update_stock(tic, {"last_update": dt.datetime.now().date()})
             logger.info(f"{tic}: updated stock info")
             return True
         except Exception:
             logger.error(f"{tic}: info extraction FAILED")
             return False
 
-    def extract_fundamental_data(self, tic: str, scraper: Scraper, last_update: dt.date) -> bool:
+    def extract_fundamental_data(self, tic: str, scraper: Scraper) -> bool:
         """
         Extract financial statement data and update database
         financials table.
@@ -251,8 +233,6 @@ class ETL:
             Target stock ticker.
         scraper : Scraper
             Stock data scraping handler object.
-        last_update : dt.date
-            Date of last data update.
 
         Returns
         -------
@@ -269,21 +249,20 @@ class ETL:
             # no past data available for stock
             fin_data = pl.DataFrame(schema=self.db_schema["financial"])
             start_date = dt.datetime.strptime(self.base_date, "%Y-%m-%d").date()
-            logger.warning(f"{tic}: no past financial data found ({last_update})")
+            logger.warning(f"{tic}: no past financial data found")
 
         try:
             end_date = dt.datetime.now().date()
             if (end_date - start_date) < dt.timedelta(days=80):
-                logger.warning(f"{tic}: earnings season not reached ({last_update})")
+                logger.warning(f"{tic}: earnings season not reached ({start_date}:{end_date})")
                 return False
 
             data = scraper.get_financial_data(start_date, end_date)
             self.db.insert_financial_data(data[self.db_schema["financial"]])
-            self.db.update_stock(tic, {"last_update": end_date})
             logger.success(f"{tic}: updated financial data ({start_date}:{end_date})")
             return True
         except Exception as e:
-            logger.error(f"{tic}: financial data extraction FAILED ({e})")
+            logger.error(f"{tic}: financial data extraction FAILED - {e}")
             return False
 
     def extract_market_data(self, tic: str, scraper: Scraper) -> bool:
@@ -297,8 +276,6 @@ class ETL:
             Target stock ticker.
         scraper : Scraper
             Stock data scraping handler object.
-        last_update : dt.date
-            Date of last data update.
 
         Returns
         -------
@@ -316,7 +293,6 @@ class ETL:
 
             data = scraper.get_market_data(self.base_date)
             self.db.insert_market_data(data[self.db_schema["market"]])
-            self.db.update_stock(tic, {"last_update": end_date})
             logger.success(f"{tic}: updated market data ({end_date})")
             return True
         except Exception as e:
@@ -333,8 +309,6 @@ class ETL:
             Target stock ticker.
         scraper : Scraper
             Stock data scraping handler object.
-        last_update : dt.date
-            Date of last data update.
 
         Returns
         -------
@@ -377,17 +351,34 @@ class ETL:
         """
         Ingest historical S&P500 member info.
         """
+        base_df = pl.read_csv(
+            self.historical_data_path / "SP500.csv",
+            separator=";",
+            columns=["tic", "name", "sector"],
+        )
 
-        index_df = pl.read_csv(self.historical_data_path / "SP500.csv", separator=";")
-        parsed_date = dt.datetime.strptime(self.base_date, "%Y-%m-%d").date()
+        base_df = pl.read_csv(self.historical_data_path / "SP500.csv", separator=";")
+        curr_df = Scraper.scrape_sp500_constituents()
+        additions, removals = Scraper.scrape_sp500_changes()
 
-        index_df = index_df.with_columns(
-            pl.col("spx_status").cast(pl.Int16),
-            pl.col("spx_status").cast(pl.Int16).alias("active"),
-            pl.lit(parsed_date).alias("last_update"),
-        )[self.db_schema["stock"]]
-
-        self.db.insert_stock(index_df)
+        df = base_df.join(additions, on="tic", how="left")
+        df = df.join(removals, on="tic", how="left")
+        df = df.join(curr_df.select(["tic", "date_added"]), on="tic", how="left")
+        df = df.with_columns(pl.col("removed").alias("date_removed"))
+        df = df.with_columns(
+            pl.when(pl.col("date_added").is_null())
+            .then(pl.col("added"))
+            .otherwise(pl.col("date_added"))
+            .alias("date_added")
+        ).with_columns(
+            pl.when(pl.col("name").is_null())
+            .then(pl.col("name_removed"))
+            .otherwise(pl.col("name"))
+            .alias("name")
+        )
+        df = df.filter(~(pl.col("date_added").is_null() & pl.col("date_removed").is_null()))
+        df = df[self.db_schema["stock"]]
+        self.db.insert_stock(df)
 
     def _ingest_historical_stock_data(self, tic: str, stock_path: Path) -> None:
         """
@@ -412,13 +403,6 @@ class ETL:
         try:
             financials_file = list(stock_path.glob("fundamentals_*.csv"))[0]
             if financials_file.exists():
-                # get date of last update and imsert on db
-                last_update = dt.datetime.strptime(
-                    financials_file.stem.split("_")[1], "%Y-%m-%d"
-                ).date()
-                self.db.update_stock(tic, {"last_update": last_update})
-                if last_update.year == dt.datetime.now().date().year:
-                    self.db.update_stock(tic, {"active": 1})
                 self._ingest_financials_data(financials_file, tic)
         except (IndexError, FileNotFoundError) as e:
             logger.warning(f"financials file not found for {tic}: {e}")

@@ -41,8 +41,6 @@
     - 'ps'
     - 'ev_ebitda'
     - 'f_score'
-    - 'f_score_gr1'
-    - 'f_score_gr4'
     # growth features
     - 'saleq_yoy'
     - 'saleq_2y'
@@ -100,9 +98,9 @@
     'mutation_type': "random"
     'crossover_type': "single_point"
     'init_range_low': [0.001, 50, 2, 1, 0, 0.5, 0.5, 0, 0]
-    'init_range_high': [0.5, 500, 10, 10, 5, 1, 1, 6, 6]
+    'init_range_high': [0.4, 500, 10, 10, 5, 1, 1, 6, 6]
     'gene_space': [
-        {"low": 0.001, "high": 0.5},
+        {"low": 0.001, "high": 0.4},
         {"low": 50, "high": 500},
         {"low": 2, "high": 10},
         {"low": 1, "high": 10},

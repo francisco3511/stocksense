@@ -1,3 +1,4 @@
+import datetime as dt
 import sqlite3
 from typing import Optional
 
@@ -31,7 +32,7 @@ class DatabaseHandler:
         create_tables(conn)
 
     def insert_stock(self, data: pl.DataFrame) -> None:
-        data = convert_date_columns_to_str(data, ["last_update"])
+        data = convert_date_columns_to_str(data, ["date_added", "date_removed"])
         insert_data(self.db.get_connection(), "stock", data)
 
     def insert_info(self, record: dict) -> None:
@@ -80,18 +81,27 @@ class DatabaseHandler:
 
     def fetch_stock(self, tic: Optional[str] = None) -> pl.DataFrame:
         conn = self.db.get_connection()
-        df = fetch_data(conn, "stock", {"tic": tic} if tic else None)
+        df = fetch_data(conn, "stock")
         if df is None:
             return pl.DataFrame()
-        df = convert_str_columns_to_date(df, ["last_update"])
-        return df
+        df = convert_str_columns_to_date(df, ["date_added", "date_removed"])
+        return df.filter(pl.col("tic") == tic) if tic else df
+
+    def fetch_constituents(self, trade_date: dt.datetime) -> list[str]:
+        """Get constituents for a given trade date."""
+        stocks = self.fetch_stock()
+        constituents = stocks.filter(
+            (pl.col("date_removed").is_null() | (pl.col("date_removed") > trade_date))
+            & (pl.col("date_added").is_null() | (pl.col("date_added") <= trade_date))
+        )["tic"].to_list()
+        return constituents
 
     def fetch_sp500_stocks(self) -> list[str]:
         conn = self.db.get_connection()
         df = fetch_data(conn, "stock")
         if df is None:
             return []
-        return df.filter(pl.col("spx_status") == 1)["tic"].to_list()
+        return df.filter(pl.col("date") == 1)["tic"].to_list()
 
     def fetch_info(self, tic: Optional[str] = None) -> pl.DataFrame:
         conn = self.db.get_connection()
@@ -151,8 +161,10 @@ class DatabaseHandler:
 
 
 def convert_date_columns_to_str(df, cols, date_format="%Y-%m-%d") -> pl.DataFrame:
-    return df.with_columns([df[col].dt.strftime(date_format) for col in cols])
+    return df.with_columns([df[col].cast(pl.Date).dt.strftime(date_format) for col in cols])
 
 
 def convert_str_columns_to_date(df, cols, date_format="%Y-%m-%d") -> pl.DataFrame:
-    return df.with_columns([pl.col(col).str.to_date(format=date_format) for col in cols])
+    return df.with_columns(
+        [pl.col(col).str.to_date(format=date_format, strict=False) for col in cols]
+    )

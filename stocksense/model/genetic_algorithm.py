@@ -103,7 +103,7 @@ def top_k_precision(y_true, y_proba, k=100):
     return np.mean(y_true[top_k_indices])
 
 
-def get_train_val_splits(data: pl.DataFrame, stocks: list[str], min_train_years: int = 5):
+def get_train_val_splits(data: pl.DataFrame, min_train_years: int = 5):
     """
     Generate training/validation splits using expanding window approach.
 
@@ -111,20 +111,16 @@ def get_train_val_splits(data: pl.DataFrame, stocks: list[str], min_train_years:
     ----------
     data : pl.DataFrame
         Training data to split.
-    stocks : list[str]
-        List of S&P 500 stocks to include in validation.
-    min_train_years : int
-        Minimum number of years required for training.
 
     Returns
     -------
     list[tuple[pl.DataFrame]]
         List of (train, validation) splits.
     """
-    # Get unique years in the dataset
+    # get unique years in the dataset
     years = data.select(pl.col("tdq").dt.year()).unique().sort("tdq").get_column("tdq").to_list()
 
-    # Ensure we have enough years for training and 2 years of validation
+    # ensure we have enough years for training and 2 years of validation
     if len(years) < min_train_years + 2:
         raise ValueError(
             f"Not enough years in dataset. Need at least {min_train_years + 2} years "
@@ -140,15 +136,14 @@ def get_train_val_splits(data: pl.DataFrame, stocks: list[str], min_train_years:
         val_years = [years[i + 2], years[i + 3]]
 
         train = data.filter(pl.col("tdq").dt.year().is_in(train_years))
-        val = data.filter(pl.col("tdq").dt.year().is_in(val_years) & pl.col("tic").is_in(stocks))
-
+        val = data.filter(pl.col("tdq").dt.year().is_in(val_years))
         splits.append((train, val))
 
     return splits
 
 
-def fitness_function_wrapper(data, features, target, min_train_years, scale, evaluation_stocks):
-    splits = get_train_val_splits(data, evaluation_stocks, min_train_years)
+def fitness_function_wrapper(data, features, target, min_train_years, scale):
+    splits = get_train_val_splits(data, min_train_years)
 
     def fitness_function(ga_instance, solution, solution_idx):
         params = {
@@ -179,8 +174,7 @@ def fitness_function_wrapper(data, features, target, min_train_years, scale, eva
 
             model.train(X_train, y_train)
             y_proba = model.predict_proba(X_val)
-
-            perf = top_k_precision(y_val, y_proba, k=100)
+            perf = top_k_precision(y_val, y_proba, k=200)
             perfs.append(perf)
 
         return sum(perfs) / len(perfs)

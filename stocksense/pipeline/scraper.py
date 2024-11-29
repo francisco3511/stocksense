@@ -310,7 +310,7 @@ class Scraper:
             raise e
 
     @staticmethod
-    def scrape_sp500_stock_info() -> pl.DataFrame:
+    def scrape_sp500_constituents() -> pl.DataFrame:
         """
         List S&P500 stock info from wiki page and return Polars dataframe.
         """
@@ -318,18 +318,77 @@ class Scraper:
         soup = bs(resp.text, "lxml")
         table = soup.find("table", id="constituents")
 
-        data = {"tic": [], "name": [], "sector": []}
+        data = {"tic": [], "name": [], "sector": [], "date_added": []}
 
         for row in table.findAll("tr")[1:]:
             ticker = row.findAll("td")[0].text.replace("\n", "")
             security = row.findAll("td")[1].text.replace("\n", "")
             sector = row.findAll("td")[2].text.replace("\n", "")
+            date_add = row.findAll("td")[5].text.replace("\n", "")
             data["tic"].append(ticker)
             data["name"].append(security)
             data["sector"].append(sector)
+            data["date_added"].append(date_add)
 
         df = pl.DataFrame(data)
         df = df.with_columns(pl.col("tic").str.replace(".", "-", literal=True))
+        df = df.with_columns(pl.col("date_added").str.to_date("%Y-%m-%d"))
+        return df
+
+    @staticmethod
+    def scrape_sp500_changes() -> pl.DataFrame:
+        """
+        Scrape S&P 500 component changes from Wikipedia and return as Polars dataframe.
+        Returns a dataframe with columns: date, added, removed, reason
+        """
+        resp = requests.get("https://en.wikipedia.org/wiki/List_of_S%26P_500_companies")
+        soup = bs(resp.text, "html.parser")
+        table = soup.find("table", id="changes")
+        rows = []
+        for row in table.find_all("tr")[1:]:
+            cols = row.find_all("td")
+            if len(cols) >= 4:
+                date = cols[0].text.strip()
+                added = cols[1].text.strip()
+                name_added = cols[2].text.strip()
+                removed = cols[3].text.strip()
+                name_removed = cols[4].text.strip()
+                rows.append(
+                    {
+                        "date": date,
+                        "added": added,
+                        "name_added": name_added,
+                        "removed": removed,
+                        "name_removed": name_removed,
+                    }
+                )
+        df = pl.DataFrame(rows)
+        df = df.with_columns(pl.col("date").str.strptime(pl.Date, "%B %d, %Y"))
+        additions = df.filter(pl.col("added").str.strip_chars() != "").select(
+            pl.col("date").alias("added"), pl.col("added").alias("tic"), pl.col("name_added")
+        )
+        removals = df.filter(pl.col("removed").str.strip_chars() != "").select(
+            pl.col("date").alias("removed"), pl.col("removed").alias("tic"), pl.col("name_removed")
+        )
+        return additions, removals
+
+    @staticmethod
+    def scrape_sp500() -> pl.DataFrame:
+        """
+        List S&P500 stock info from wiki page and return Polars dataframe.
+        Also includes addition and removal dates from changes table.
+        """
+
+        df = Scraper.scrape_sp500_constituents()
+        changes_df = Scraper.scrape_sp500_changes()
+        additions = changes_df.filter(pl.col("added").str.strip_chars() != "").select(
+            pl.col("date").alias("addition_date"), pl.col("added").alias("tic")
+        )
+        removals = changes_df.filter(pl.col("removed").str.strip_chars() != "").select(
+            pl.col("date").alias("removal_date"), pl.col("removed").alias("tic")
+        )
+        df = df.join(additions, on="tic", how="left")
+        df = df.join(removals, on="tic", how="left")
         return df
 
     @staticmethod

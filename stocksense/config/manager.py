@@ -32,9 +32,7 @@ class ProcessingConfig(BaseModel):
     trading_days_year: int = Field(alias="year_trading_days")
     trading_days_2year: int = Field(alias="two_year_trading_days")
     prediction_horizon: int = Field(gt=0)
-    over_performance_threshold: float = Field(
-        gt=0.0, lt=1.0, description="Overperformance threshold"
-    )
+    over_performance_threshold: float = Field(lt=1.0, description="Overperformance threshold")
     performance_threshold: float = Field(gt=0.0, lt=1.0, description="Performance threshold")
     sectors: List[str] = Field(min_length=11, max_length=11)
 

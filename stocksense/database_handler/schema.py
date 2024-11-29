@@ -10,9 +10,8 @@ def create_tables(connection: Connection | None) -> None:
                 tic TEXT PRIMARY KEY,
                 name TEXT,
                 sector TEXT,
-                last_update TEXT,
-                spx_status INTEGER,
-                active INTEGER
+                date_added TEXT,
+                date_removed TEXT
             )
         """,
         "info": """

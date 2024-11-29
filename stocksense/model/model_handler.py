@@ -7,7 +7,6 @@ import polars as pl
 from loguru import logger
 
 from stocksense.config import config
-from stocksense.database_handler import DatabaseHandler
 
 from .genetic_algorithm import GeneticAlgorithm, fitness_function_wrapper
 from .xgboost_model import XGBoostModel
@@ -24,12 +23,13 @@ class ModelHandler:
     Basic handling for model training, evaluation and testing.
     """
 
-    def __init__(self, evaluation_stocks, trade_date: Optional[dt.datetime] = None):
+    def __init__(self, trade_date: Optional[dt.datetime] = None):
         self.features = config.model.features
         self.target = config.model.target
         self.min_train_years = config.model.min_train_years
-        self.evaluation_stocks = evaluation_stocks
         self.trade_date = trade_date if trade_date else find_last_trading_date()
+        if not validate_trade_date(self.trade_date):
+            raise ValueError(f"Invalid trade date: {self.trade_date}.")
 
     def train(self, data: pl.DataFrame, retrain: bool = False):
         """
@@ -64,12 +64,7 @@ class ModelHandler:
             ga = GeneticAlgorithm(
                 ga_settings=config.model.ga,
                 fitness_func=fitness_function_wrapper(
-                    train,
-                    self.features,
-                    self.target,
-                    self.min_train_years,
-                    scale,
-                    self.evaluation_stocks,
+                    train, self.features, self.target, self.min_train_years, scale
                 ),
             )
 
@@ -79,7 +74,7 @@ class ModelHandler:
             best_solution, best_solution_fitness, best_solution_idx = ga.best_solution()
 
             # train final model with best params
-            params = format_parameters(best_solution, scale)
+            params = format_ga_parameters(best_solution, scale)
 
             X_train = train.select(self.features).to_pandas()
             y_train = train.select(self.target).to_pandas().values.ravel()
@@ -91,9 +86,16 @@ class ModelHandler:
             logger.error(f"ERROR: failed to train model - {e}")
             raise
 
-    def score(self, data):
+    def score(self, data: pl.DataFrame, stocks: list[str]):
         """
         Classify using sector-specific models.
+
+        Parameters
+        ----------
+        data : pl.DataFrame
+            Preprocessed financial data.
+        stocks : list[str]
+            List of stocks to score.
         """
         try:
             logger.info(f"START stocksense eval - {self.trade_date}")
@@ -102,9 +104,7 @@ class ModelHandler:
             if not model_file.exists():
                 raise FileNotFoundError(f"No model found for trade date {self.trade_date}")
 
-            test = data.filter(
-                (pl.col("tdq") == self.trade_date) & pl.col("tic").is_in(self.evaluation_stocks)
-            )
+            test = data.filter((pl.col("tdq") == self.trade_date) & pl.col("tic").is_in(stocks))
             test_df = test.select(self.features).to_pandas()
 
             model = XGBoostModel()
@@ -113,8 +113,8 @@ class ModelHandler:
             test = test.with_columns(pl.Series("score", prob_scores))
             self.save_scoring_report(test)
             return
-        except Exception:
-            logger.error("ERROR: no model available.")
+        except Exception as e:
+            logger.error(f"ERROR: failed to score stocks - {e}")
             raise
 
     def save_scoring_report(self, test_data: pl.DataFrame):
@@ -124,13 +124,13 @@ class ModelHandler:
         Parameters
         ----------
         test_data : pl.DataFrame
-            _description_
+            Test data with scores.
         """
         try:
             logger.info("START saving scoring report")
-            report = test_data.select(["tic", "score", "freturn", "adj_freturn"]).sort(
-                "score", descending=True
-            )
+            report = test_data.select(
+                ["tic", "close", "score", "freturn", "adj_freturn", "fperf"]
+            ).sort("score", descending=True)
             report_file = REPORT_DIR / f"report_{self.trade_date.date()}.csv"
             report.write_csv(report_file)
             logger.success(f"END saved scoring report to {report_file}")
@@ -159,8 +159,23 @@ class ModelHandler:
         return round(neg_count / pos_count, 2)
 
 
-def get_sp500_stocks():
-    return DatabaseHandler().fetch_stock().filter(pl.col("spx_status") == 1)["tic"].to_list()
+def validate_trade_date(date: dt.datetime) -> bool:
+    """
+    Validate if the trade date is one of the allowed dates
+    (March 1st, June 1st, September 1st, or December 1st).
+
+    Parameters
+    ----------
+    date : dt.datetime
+        Date to validate.
+
+    Returns
+    -------
+    bool
+        True if date is valid, False otherwise.
+    """
+    allowed_months = [3, 6, 9, 12]
+    return date.month in allowed_months and date.day == 1
 
 
 def find_last_trading_date():
@@ -190,22 +205,29 @@ def find_last_trading_date():
         return None
 
 
-def format_parameters(solution: List[float], scale: float):
+def format_ga_parameters(ga_solution: List[float], scale: float):
     """
     Format model parameters.
+
+    Parameters
+    ----------
+    ga_solution : List[float]
+        GA solution encoded as a list.
+    scale : float
+        Class imbalance scale.
     """
     # train final model with best params
     return {
         "objective": "binary:logistic",
-        "learning_rate": solution[0],
-        "n_estimators": int(solution[1]),
-        "max_depth": int(solution[2]),
-        "min_child_weight": solution[3],
-        "gamma": solution[4],
-        "subsample": solution[5],
-        "colsample_bytree": solution[6],
-        "reg_alpha": solution[7],
-        "reg_lambda": solution[8],
+        "learning_rate": ga_solution[0],
+        "n_estimators": int(ga_solution[1]),
+        "max_depth": int(ga_solution[2]),
+        "min_child_weight": ga_solution[3],
+        "gamma": ga_solution[4],
+        "subsample": ga_solution[5],
+        "colsample_bytree": ga_solution[6],
+        "reg_alpha": ga_solution[7],
+        "reg_lambda": ga_solution[8],
         "scale_pos_weight": scale,
         "eval_metric": "logloss",
         "nthread": -1,

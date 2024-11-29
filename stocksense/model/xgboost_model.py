@@ -5,6 +5,10 @@ import xgboost as xgb
 
 
 class XGBoostModel:
+    """
+    Custom wrapper for XGBoost classifier.
+    """
+
     def __init__(self, params=None):
         self.params = (
             params
@@ -29,43 +33,69 @@ class XGBoostModel:
         self.model = None
 
     def train(self, X_train, y_train):
+        """
+        Train the classifier.
+
+        Parameters
+        ----------
+        X_train : pd.DataFrame
+            Training data.
+        y_train : pd.Series
+            Training labels.
+        """
         self.model = xgb.XGBClassifier(**self.params)
         self.model.fit(X_train, y_train, verbose=True)
 
     def predict(self, X):
+        """
+        Predict the class labels for the provided data.
+
+        Parameters
+        ----------
+        X : pd.DataFrame
+            Data to predict.
+
+        Returns
+        -------
+        np.ndarray
+            Predicted class labels.
+
+        Raises
+        ------
+        Exception
+            If the model is not trained yet.
+        """
         if self.model is None:
             raise Exception("Model is not trained yet. Train the model before predicting.")
         return self.model.predict(X)
 
     def predict_proba(self, X):
+        """
+        Predict the class probabilities for the provided data.
+
+        Parameters
+        ----------
+        X : pd.DataFrame
+            Data to predict.
+
+        Returns
+        -------
+        np.ndarray
+            Predicted class probabilities.
+        """
         if self.model is None:
             raise Exception("Model is not trained yet. Train the model before predicting.")
         return self.model.predict_proba(X)[:, 1]
 
-    def evaluate(self, X_test, y_test):
-        y_pred = self.predict(X_test)
-        y_proba = self.predict_proba(X_test)
-        y_pred_custom = (y_proba > 0.70).astype(int)
-
-        eval = {
-            "acc": skm.accuracy_score(y_test, y_pred),
-            "prec": skm.precision_score(y_test, y_pred_custom),
-            "f1": skm.f1_score(y_test, y_pred),
-            "wf1": skm.f1_score(y_test, y_pred, average="weighted"),
-            "rec": skm.recall_score(y_test, y_pred),
-            "brier": skm.brier_score_loss(y_test, y_proba),
-        }
-        return eval
-
-    def pr_auc(self, X_test, y_test):
+    def get_pr_auc(self, X_test, y_test):
         y_proba = self.predict_proba(X_test)
         return skm.average_precision_score(y_test, y_proba)
 
-    def roc_auc(self, X_test, y_test):
+    def get_roc_auc(self, X_test, y_test):
         y_proba = self.predict_proba(X_test)
         return skm.roc_auc_score(y_test, y_proba)
 
-    def ndcg_score(self, X_test, y_test, k=None):
+    def get_ndcg_score(self, X_test, y_test, k=None):
         y_proba = self.predict_proba(X_test).reshape(1, -1)
         return skm.ndcg_score(y_test.reshape(1, -1), y_proba, k=k)
 
