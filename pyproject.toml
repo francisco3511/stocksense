@@ -31,7 +31,8 @@ dependencies = [
     "ipykernel",
     "shap",
     "pre-commit",
-    "pydantic"
+    "pydantic",
+    "openpyxl"
 ]
 
 [project.optional-dependencies]

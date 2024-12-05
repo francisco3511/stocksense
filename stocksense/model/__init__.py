@@ -1,4 +1,5 @@
 from .model_handler import ModelHandler
-from .xgboost_model import XGBoostModel
+from .portfolio import PortfolioBuilder
+from .xgboost_model import XGBoostClassifier, XGBoostRegressor
 
-__all__ = ["XGBoostModel", "ModelHandler"]
+__all__ = ["XGBoostRegressor", "XGBoostClassifier", "ModelHandler", "PortfolioBuilder"]

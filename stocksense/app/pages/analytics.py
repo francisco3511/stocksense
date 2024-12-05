@@ -16,12 +16,7 @@ MARGIN = {"l": 0, "r": 10, "b": 10, "t": 25}
 def list_stocks():
     db = DatabaseHandler()
     stocks = db.fetch_stock().to_pandas()
-    return sorted(
-        stocks.loc[
-            stocks.spx_status == 1,  # noqa: E712
-            "tic",
-        ].values.tolist()
-    )
+    return sorted(stocks.loc[stocks.date_removed.isnull()]["tic"].values.tolist())
 
 
 def date_breaks(df, date_col="date"):
@@ -234,7 +229,7 @@ def plot_processed_data(df):
 
 def main():
     """
-    Main app script.
+    Main analytics script.
     """
 
     st.set_page_config(layout="wide", page_title="Stock Data Analytics", page_icon="📈")
@@ -280,7 +275,7 @@ def main():
     st.session_state.page_subheader = f"{name} ({ticker})"
 
     st.subheader(st.session_state.page_subheader)
-    st.markdown(f"**Last update**: {stock.loc[0, 'last_update']}")
+    st.markdown(f"**Last update**: {max_date}")
 
     tab1, tab2, tab3, tab4, tab5 = st.tabs(
         ["Status", "Market", "Financials", "Insider Trading", "Feature Analysis"]

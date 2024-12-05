@@ -20,7 +20,7 @@ def load_sp500_data():
     """
     db = DatabaseHandler()
     stocks = db.fetch_stock().to_pandas()
-    stocks = stocks.loc[stocks.spx_status == 1]
+    stocks = stocks.loc[stocks.date_removed.isnull()]
 
     info = db.fetch_info().to_pandas()
     stock_df = stocks.merge(info, how="left", on="tic")
@@ -60,7 +60,7 @@ def show_recent_earnings(data):
     data : pd.DataFrame
         Processed S&P 500 data.
     """
-    df = data.sort_values("rdq", ascending=False).head(10)
+    df = data.sort_values("rdq", ascending=False).head(15)
     df = df[["tic", "rdq", "sector", "curr_price", "saleq", "surprise_pct"]]
     st.dataframe(
         df,
@@ -108,7 +108,7 @@ def show_market_summary(data):
     with col2:
         st.metric("Total Market Cap", summary["Total Market Cap"])
     with col3:
-        st.metric("Average P/E", summary["Average P/E"])
+        st.metric("Average Trailing P/E", summary["Average P/E"])
     with col4:
         st.metric("Avg Target Upside", summary["Avg Target Upside"])
 

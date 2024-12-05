@@ -813,60 +813,48 @@ def compute_performance_targets(df: pl.DataFrame) -> pl.DataFrame:
         Dataset with each observation associated to forward returns and flags.
     """
     df = df.sort(["tic", "rdq"])
+
+    # compute forward returns and excess returns
     df = df.with_columns(
-        (
+        [
+            # market returns
             (
-                pl.col("index_close").shift(-config.processing.prediction_horizon)
-                / pl.col("index_close")
+                (
+                    pl.col("index_close").shift(-config.processing.prediction_horizon)
+                    / pl.col("index_close")
+                )
+                - 1
             )
-            - 1
-        )
-        .over("tic")
-        .alias("index_freturn"),
-        (
-            (pl.col("adj_close").shift(-config.processing.prediction_horizon) / pl.col("adj_close"))
-            - 1
-        )
-        .over("tic")
-        .alias("freturn"),
-        ((pl.col("adj_close").shift(-1) / pl.col("adj_close")) - 1).over("tic").alias("freturn_1q"),
-        ((pl.col("adj_close").shift(-2) / pl.col("adj_close")) - 1).over("tic").alias("freturn_2q"),
-        ((pl.col("adj_close").shift(-3) / pl.col("adj_close")) - 1).over("tic").alias("freturn_3q"),
-        ((pl.col("adj_close").shift(-4) / pl.col("adj_close")) - 1).over("tic").alias("freturn_4q"),
+            .over("tic")
+            .alias("index_freturn"),
+            # stock returns
+            (
+                (
+                    pl.col("adj_close").shift(-config.processing.prediction_horizon)
+                    / pl.col("adj_close")
+                )
+                - 1
+            )
+            .over("tic")
+            .alias("freturn"),
+        ]
     )
-    df = df.with_columns((pl.col("freturn") - pl.col("index_freturn")).alias("adj_freturn"))
+
+    # compute excess returns and forward Sharpe ratio
     df = df.with_columns(
-        (pl.col("adj_freturn") > config.processing.over_performance_threshold)
-        .cast(pl.Int8)
-        .alias("adj_fperf"),
-        (pl.col("freturn_1q") > config.processing.performance_threshold)
-        .cast(pl.Int8)
-        .alias("fperf_1q"),
-        (pl.col("freturn_2q") > config.processing.performance_threshold)
-        .cast(pl.Int8)
-        .alias("fperf_2q"),
-        (pl.col("freturn_3q") > config.processing.performance_threshold)
-        .cast(pl.Int8)
-        .alias("fperf_3q"),
-        (pl.col("freturn_4q") > config.processing.performance_threshold)
-        .cast(pl.Int8)
-        .alias("fperf_4q"),
-    ).with_columns(
-        ((pl.col("fperf_1q") + pl.col("fperf_2q") + pl.col("fperf_3q") + pl.col("fperf_4q")) > 0)
-        .cast(pl.Int8)
-        .alias("fperf")
+        [
+            (pl.col("freturn") - pl.col("index_freturn")).alias("excess_return"),
+            pl.col("vol_yoy")
+            .shift(-config.processing.prediction_horizon)
+            .over("tic")
+            .alias("forward_vol"),
+        ]
     )
-    component_cols = [
-        "freturn_1q",
-        "freturn_2q",
-        "freturn_3q",
-        "freturn_4q",
-        "fperf_1q",
-        "fperf_2q",
-        "fperf_3q",
-        "fperf_4q",
-    ]
-    return df.drop(component_cols)
+
+    df = df.with_columns([pl.col("forward_vol").clip(0.001, None).alias("forward_vol")])
+
+    df = df.with_columns((pl.col("excess_return") / pl.col("forward_vol")).alias("fsharpe_ratio"))
+    return df
 
 
 def compute_sector_dummies(df: pl.DataFrame, info: pl.DataFrame) -> pl.DataFrame:

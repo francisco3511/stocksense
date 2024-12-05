@@ -1,13 +1,23 @@
+import os
+from typing import Callable
+
 import numpy as np
 import polars as pl
 import pygad
 from loguru import logger
 
-from .xgboost_model import XGBoostModel
+from .xgboost_model import XGBoostRegressor
+
+os.environ["OMP_NUM_THREADS"] = "2"
+os.environ["MKL_NUM_THREADS"] = "2"
+os.environ["OPENBLAS_NUM_THREADS"] = "2"
+os.environ["VECLIB_MAXIMUM_THREADS"] = "2"
 
 
 class GeneticAlgorithm:
-    def __init__(self, ga_settings, fitness_func):
+    def __init__(
+        self, ga_settings: dict, fitness_func: Callable[[pygad.GA, list[float], int], float]
+    ):
         self.num_generations = ga_settings["num_generations"]
         self.num_parents_mating = ga_settings["num_parents_mating"]
         self.sol_per_pop = ga_settings["sol_per_pop"]
@@ -47,18 +57,23 @@ class GeneticAlgorithm:
             mutation_type=self.mutation_type,
             crossover_type=self.crossover_type,
             on_generation=self.on_generation,
-            parallel_processing=["thread", 4],
+            parallel_processing=["thread", 2],
         )
 
-    def on_generation(self, ga_instance):
+    def on_generation(self, ga_instance: pygad.GA):
         """
         Callback function.
+
+        Parameters
+        ----------
+        ga_instance : pygad.GA
+            Genetic algorithm instance.
         """
 
         best_solution, best_solution_fitness, best_solution_idx = ga_instance.best_solution()
-        logger.info(f"generation {ga_instance.generations_completed}:")
-        logger.info(f"\tbest solution: {best_solution}")
-        logger.info(f"\tbest fitness: {best_solution_fitness}")
+        logger.info(f"GENERATION {ga_instance.generations_completed}:")
+        logger.info(f"\tBest solution: [{', '.join(f'{val:.2f}' for val in best_solution)}]")
+        logger.info(f"\tBest fitness: {best_solution_fitness}")
 
         if best_solution_fitness > self.best_fitness_value:
             self.best_fitness_value = best_solution_fitness
@@ -98,27 +113,88 @@ class GeneticAlgorithm:
         self.ga_instance.plot_fitness()
 
 
-def top_k_precision(y_true, y_proba, k=100):
-    top_k_indices = np.argsort(y_proba)[-k:]
+def top_k_performance(y_true: np.array, y_pred: np.array, k: int = 100) -> float:
+    """
+    Calculate the performance metrics of top K predictions.
+
+    Parameters
+    ----------
+    y_true : np.array
+        Actual returns
+    y_pred : np.array
+        Predicted ranking scores
+    k : int
+        Number of top stocks to consider
+
+    Returns
+    -------
+    dict
+        Dictionary containing performance metrics:
+        - returns: Average returns of top K predicted stocks
+        - hit_rate: Proportion of positive returns in top K
+        - rmse: Root mean squared error of predictions
+    """
+    top_k_indices = np.argsort(y_pred)[-k:]
+    top_k_returns = np.mean(y_true[top_k_indices])
+    hit_rate = np.mean(y_true[top_k_indices] > 0)
+    rmse = np.sqrt(np.mean((y_true - y_pred) ** 2))
+
+    returns_norm = (top_k_returns - min(y_true)) / (max(y_true) - min(y_true))
+    rmse_norm = rmse / (max(y_true) - min(y_true))
+
+    return (0.4 * returns_norm) + (0.3 * hit_rate) + (-0.3 * rmse_norm)
+
+
+def top_k_returns(y_true: np.array, y_pred: np.array, k: int = 100) -> float:
+    """
+    Calculate the average returns of top K predictions.
+
+    Parameters
+    ----------
+    y_true : np.array
+        Actual returns
+    y_pred : np.array
+        Predicted ranking scores
+    k : int
+        Number of top stocks to consider
+
+    Returns
+    -------
+    float
+        Average returns of top K predicted stocks
+    """
+    top_k_indices = np.argsort(y_pred)[-k:]
     return np.mean(y_true[top_k_indices])
 
 
-def get_train_val_splits(data: pl.DataFrame, min_train_years: int = 5):
+def get_train_val_splits(
+    data: pl.DataFrame, min_train_years: int = 5, max_splits: int = 2
+) -> list[tuple[pl.DataFrame, pl.DataFrame]]:
     """
-    Generate training/validation splits using expanding window approach.
+    Generate training/validation splits using expanding window approach,
+    starting from most recent years and moving backwards.
 
     Parameters
     ----------
     data : pl.DataFrame
         Training data to split.
+    min_train_years : int
+        Minimum number of years required for training
+    max_splits : int
+        Maximum number of splits to return
 
     Returns
     -------
     list[tuple[pl.DataFrame]]
-        List of (train, validation) splits.
+        List of (train, validation) splits, ordered from most recent to oldest.
     """
-    # get unique years in the dataset
-    years = data.select(pl.col("tdq").dt.year()).unique().sort("tdq").get_column("tdq").to_list()
+    years = (
+        data.select(pl.col("tdq").dt.year())
+        .unique()
+        .sort("tdq", descending=True)
+        .get_column("tdq")
+        .to_list()
+    )
 
     # ensure we have enough years for training and 2 years of validation
     if len(years) < min_train_years + 2:
@@ -128,43 +204,87 @@ def get_train_val_splits(data: pl.DataFrame, min_train_years: int = 5):
         )
 
     splits = []
-    for i in range(len(years) - 3):
-        if i + 1 < min_train_years:
-            continue
+    for i in range(0, len(years) - min_train_years - 1, 2):
+        # Get validation years (2 years)
+        val_years = years[i + 1 : i + 3]
 
-        train_years = years[: i + 2]
-        val_years = [years[i + 2], years[i + 3]]
+        # Get all available years before validation period for training
+        train_years = years[i + 3 :]
+
+        # Skip if we don't have enough training years
+        if len(train_years) < min_train_years:
+            break
 
         train = data.filter(pl.col("tdq").dt.year().is_in(train_years))
         val = data.filter(pl.col("tdq").dt.year().is_in(val_years))
         splits.append((train, val))
 
+    if max_splits and max_splits > 0:
+        splits = splits[:max_splits]
+
     return splits
 
 
-def fitness_function_wrapper(data, features, target, min_train_years, scale):
+def fitness_function_wrapper(
+    data: pl.DataFrame, features: list[str], target: str, min_train_years: int = 5
+) -> Callable[[pygad.GA, list[float], int], float]:
+    """
+    Wrapper for the fitness function used in the genetic algorithm.
+
+    Parameters
+    ----------
+    data : pl.DataFrame
+        Training data.
+    features : list[str]
+        Features to use for training.
+    target : str
+        Target variable to predict.
+    min_train_years : int
+        Minimum number of years to use for training.
+
+    Returns
+    -------
+    Callable[[pygad.GA, list[float], int], float]
+        Fitness function.
+    """
     splits = get_train_val_splits(data, min_train_years)
 
-    def fitness_function(ga_instance, solution, solution_idx):
+    def fitness_function(ga_instance, solution, solution_idx) -> float:
+        """
+        Fitness function for the genetic algorithm.
+
+        Parameters
+        ----------
+        ga_instance : pygad.GA
+            Genetic algorithm instance.
+        solution : list[float]
+            Solution vector.
+        solution_idx : int
+            Index of the solution.
+
+        Returns
+        -------
+        float
+            Fitness value.
+        """
         params = {
-            "objective": "binary:logistic",
+            "objective": "reg:squarederror",
             "learning_rate": solution[0],
-            "n_estimators": int(solution[1]),
-            "max_depth": int(solution[2]),
+            "n_estimators": round(solution[1]),
+            "max_depth": round(solution[2]),
             "min_child_weight": solution[3],
             "gamma": solution[4],
             "subsample": solution[5],
             "colsample_bytree": solution[6],
             "reg_alpha": solution[7],
             "reg_lambda": solution[8],
-            "scale_pos_weight": scale,
-            "eval_metric": "logloss",
-            "nthread": 1,
+            "eval_metric": "rmse",
+            "nthread": 2,
             "seed": 100,
         }
 
-        model = XGBoostModel(params)
-        perfs = []
+        model = XGBoostRegressor(params)
+        performance_list = []
 
         for train, val in splits:
             X_train = train.select(features).to_pandas()
@@ -173,10 +293,11 @@ def fitness_function_wrapper(data, features, target, min_train_years, scale):
             y_val = val.select(target).to_pandas().values.ravel()
 
             model.train(X_train, y_train)
-            y_proba = model.predict_proba(X_val)
-            perf = top_k_precision(y_val, y_proba, k=200)
-            perfs.append(perf)
+            y_pred = model.predict(X_val)
+            performance = top_k_performance(y_val, y_pred, k=200)
+            performance_list.append(performance)
 
-        return sum(perfs) / len(perfs)
+        avg_performance = np.mean(performance_list)
+        return avg_performance if avg_performance > 0 else 0.0001
 
     return fitness_function

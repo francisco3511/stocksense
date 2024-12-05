@@ -1,5 +1,7 @@
 import datetime as dt
 import logging
+import re
+import time
 
 import polars as pl
 import requests
@@ -172,22 +174,66 @@ class Scraper:
         """
         Scrape earnings dates and eps surprise.
         """
-        n_quarters = int((end_date - start_date).days / 90) + 20
+        try:
+            n_quarters = int((end_date - start_date).days / 90) + 20
+            df = pl.from_pandas(self.handler.get_earnings_dates(limit=n_quarters).reset_index())
+            df = df.rename({"Earnings Date": "rdq", "Surprise(%)": "surprise_pct"})
+            df = df.select(["rdq", "surprise_pct"])
+            df = df.with_columns(pl.col("rdq").dt.date())
+            df = df.filter((pl.col("rdq") >= start_date) & (pl.col("rdq") <= end_date))
+            df = df.unique(subset=["rdq"]).sort("rdq").drop_nulls(subset=["surprise_pct", "rdq"])
+            if df.is_empty():
+                raise pl.exceptions.EmptyDataFrame("No financial release date available.")
+        except Exception:
+            return pl.DataFrame()
 
-        df = pl.from_pandas(self.handler.get_earnings_dates(limit=n_quarters).reset_index())
+    def _get_earnings_dates_sec(self, start_date: dt.date, end_date: dt.date):
+        """
+        Scrape earnings dates from SEC.
+        """
+        base_url = "https://www.sec.gov/cgi-bin/browse-edgar"
+        headers = {
+            "User-Agent": "Company Name AdminContact@domain.com",  # Replace with your details
+            "Accept-Encoding": "gzip, deflate",
+            "Host": "www.sec.gov",
+        }
+        params = {
+            "action": "getcompany",
+            "CIK": self.tic,
+            "type": "10-",
+            "owner": "include",
+            "count": "100",
+        }
+        try:
+            response = requests.get(base_url, params=params, headers=headers)
+            response.raise_for_status()
+            soup = bs(response.text, "html.parser")
 
-        df = df.rename({"Earnings Date": "rdq", "Surprise(%)": "surprise_pct"})
+            time.sleep(1)
 
-        # format dates and filter data
-        df = df.select(["rdq", "surprise_pct"])
-        df = df.with_columns(pl.col("rdq").dt.date())
-        df = df.filter((pl.col("rdq") >= start_date) & (pl.col("rdq") <= end_date))
-        df = df.unique(subset=["rdq"]).sort("rdq").drop_nulls(subset=["surprise_pct", "rdq"])
+            if soup.select("p > center > h1"):
+                return pl.DataFrame()
 
-        if df.is_empty():
-            raise Exception("No financial release date available for date interval.")
+            dates = []
+            dateFind = re.compile(r"2\d{3}-\d{2}-\d{2}")
 
-        return df
+            for tr in soup.select("tr"):
+                tdElems = tr.select("td")
+                if len(tdElems) == 5 and dateFind.search(tdElems[3].getText()):
+                    date = tdElems[3].getText().strip()
+                    dates.append(date)
+
+            if not dates:
+                return pl.DataFrame()
+
+            df = pl.DataFrame({"rdq": dates, "surprise_pct": [None] * len(dates)})
+            df = df.with_columns(pl.col("rdq").str.to_date("%Y-%m-%d"))
+            df = df.filter((pl.col("rdq") >= start_date) & (pl.col("rdq") <= end_date))
+            return df.unique(subset=["rdq"]).sort("rdq")
+
+        except requests.exceptions.RequestException as e:
+            print(f"Error fetching data: {e}")
+            return pl.DataFrame()
 
     def get_market_data(self, start_date):
         """
@@ -217,25 +263,32 @@ class Scraper:
         """
         if self.source == "yfinance":
             df = self._get_fundamental_data_yfinance(start_date, end_date)
-            earn_dates = self._get_earnings_dates_yfinance(start_date, end_date)
-
-            df = df.with_columns(pl.col("datadate").dt.date()).sort("datadate")
-            earn_dates = earn_dates.with_columns(pl.col("rdq").dt.date()).sort("rdq")
+            earn_dates = self._get_earnings_dates_sec(start_date, end_date)
         else:
             raise Exception("Other methods not implemented")
 
-        df = df.join_asof(
-            earn_dates,
-            left_on="datadate",
-            right_on="rdq",
-            strategy="forward",
-            tolerance=dt.timedelta(days=80),
-        )
+        try:
+            df = df.with_columns(pl.col("datadate").dt.date()).sort("datadate")
+            earn_dates = earn_dates.with_columns(pl.col("rdq").dt.date()).sort("rdq")
+            df = df.join_asof(
+                earn_dates,
+                left_on="datadate",
+                right_on="rdq",
+                strategy="forward",
+                tolerance=dt.timedelta(days=80),
+            )
+        except pl.exceptions.ColumnNotFoundError:
+            df = df.with_columns([pl.lit(None).alias("rdq"), pl.lit(None).alias("surprise_pct")])
 
-        # in cases where data is found but no release dt, defer 80 days later
         df = df.with_columns(
             pl.when(pl.col("rdq").is_null())
             .then(pl.col("datadate") + pl.duration(days=80))
+            .otherwise(pl.col("rdq"))
+            .alias("rdq")
+        )
+        df = df.with_columns(
+            pl.when(pl.col("rdq") > dt.datetime.now().date())
+            .then(dt.datetime.now().date())
             .otherwise(pl.col("rdq"))
             .alias("rdq")
         )
