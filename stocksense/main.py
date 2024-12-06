@@ -1,51 +1,108 @@
+from datetime import datetime
+from typing import Optional
+
 import click
 import polars as pl
 
+from stocksense import __version__
 from stocksense.config import config
 from stocksense.database_handler import DatabaseHandler
 from stocksense.model import ModelHandler, PortfolioBuilder
 from stocksense.pipeline import ETL, clean, engineer_features
 
 
+def validate_trade_date(ctx, param, value: Optional[datetime]) -> Optional[datetime]:
+    """Validate that trade date is 1st of Mar/Jun/Sep/Dec."""
+    if value is None:
+        return value
+    valid_months = {3, 6, 9, 12}
+    if value.day != 1 or value.month not in valid_months:
+        raise click.BadParameter("Trade date must be the 1st of March, June, September or December")
+    return value
+
+
 def prepare_data() -> pl.DataFrame:
     """Prepare data for model operations."""
     data = engineer_features()
-    return clean(data)
+    data = clean(data)
+    return data
 
 
-@click.command()
-@click.option("-u", "--update", is_flag=True, help="Update stock data.")
-@click.option("-t", "--train", is_flag=True, help="Train model.")
-@click.option("-p", "--portfolio", is_flag=True, help="Build portfolio.")
-@click.option("-f", "--force", is_flag=True, default=False, help="Force model retraining.")
+@click.group()
+@click.version_option(version=__version__, prog_name="stocksense")
+def cli():
+    """Stocksense CLI - Stock analytics and portfolio management tool."""
+    pass
+
+
+@cli.command()
+@click.option(
+    "-c", "--config-path", type=click.Path(exists=True), help="Path to custom configuration file"
+)
+def update():
+    """
+    Update stock database with latest market data.
+    """
+    click.echo("Updating stock database...")
+    etl_handler = ETL(config)
+    etl_handler.extract()
+    click.echo("Database update complete.")
+
+
+@cli.command()
 @click.option(
     "-tdq",
     "--trade-date",
     type=click.DateTime(formats=["%Y-%m-%d"]),
-    help=(
-        "Trade date for model operations (format: YYYY-MM-DD)."
-        "Must be the 1st of March, June, September or December."
-    ),
+    callback=validate_trade_date,
+    required=True,
+    help="Trade date (YYYY-MM-DD). Must be 1st of Mar/Jun/Sep/Dec.",
 )
-def main(update, train, portfolio, force, trade_date):
-    """
-    CLI handling.
-    """
+@click.option("-f", "--force", is_flag=True, help="Force model retraining even if model exists.")
+def train(trade_date: datetime, force: bool):
+    """Train the prediction model for a specific trade date."""
+    click.echo(f"Training model for trade date: {trade_date.date()}")
+    data = prepare_data()
+    handler = ModelHandler(trade_date)
+    handler.train(data, force)
+    click.echo("Model training complete!")
 
-    if update:
-        etl_handler = ETL(config)
-        etl_handler.extract()
 
-    if any([train, portfolio]):
-        data = prepare_data()
-        constituents = DatabaseHandler().fetch_constituents(trade_date)
-        handler = ModelHandler(trade_date)
-        if train:
-            handler.train(data, force)
-        if portfolio:
-            handler.score(data, constituents)
-            portfolio = PortfolioBuilder(weighting="market_cap")
-            portfolio.build_portfolio(trade_date)
+@cli.command()
+@click.option(
+    "-tdq",
+    "--trade-date",
+    type=click.DateTime(formats=["%Y-%m-%d"]),
+    callback=validate_trade_date,
+    required=True,
+    help="Trade date (YYYY-MM-DD). Must be 1st of Mar/Jun/Sep/Dec.",
+)
+@click.option(
+    "-w",
+    "--weighting",
+    type=click.Choice(["market_cap", "equal"], case_sensitive=False),
+    default="market_cap",
+    help="Portfolio weighting strategy.",
+)
+def portfolio(trade_date: datetime, weighting: str):
+    """Build investment portfolio for a specific trade date."""
+    click.echo(f"Building portfolio for trade date: {trade_date.date()}")
+
+    data = prepare_data()
+    constituents = DatabaseHandler().fetch_constituents(trade_date)
+
+    handler = ModelHandler(trade_date)
+    handler.score(data, constituents)
+
+    portfolio = PortfolioBuilder(weighting=weighting)
+    portfolio.build_portfolio(trade_date)
+
+    click.echo("Portfolio construction complete!")
+
+
+def main():
+    """CLI entry point."""
+    cli(prog_name="stocksense")
 
 
 if __name__ == "__main__":

@@ -168,7 +168,7 @@ def top_k_returns(y_true: np.array, y_pred: np.array, k: int = 100) -> float:
 
 
 def get_train_val_splits(
-    data: pl.DataFrame, min_train_years: int = 5, max_splits: int = 2
+    data: pl.DataFrame, min_train_years: int = 5, val_years: int = 2, max_splits: int = 2
 ) -> list[tuple[pl.DataFrame, pl.DataFrame]]:
     """
     Generate training/validation splits using expanding window approach,
@@ -188,35 +188,31 @@ def get_train_val_splits(
     list[tuple[pl.DataFrame]]
         List of (train, validation) splits, ordered from most recent to oldest.
     """
-    years = (
-        data.select(pl.col("tdq").dt.year())
-        .unique()
-        .sort("tdq", descending=True)
-        .get_column("tdq")
-        .to_list()
+    quarters = (
+        data.select(pl.col("tdq")).unique().sort("tdq", descending=True).get_column("tdq").to_list()
     )
 
-    # ensure we have enough years for training and 2 years of validation
-    if len(years) < min_train_years + 2:
+    val_years = 2
+    min_train_quarters = min_train_years * 4
+    val_window = val_years * 4
+
+    # ensure we have enough years for training and validation
+    if len(quarters) < min_train_quarters + val_window:
         raise ValueError(
             f"Not enough years in dataset. Need at least {min_train_years + 2} years "
             f"({min_train_years} for training, 2 for validation)."
         )
 
     splits = []
-    for i in range(0, len(years) - min_train_years - 1, 2):
-        # Get validation years (2 years)
-        val_years = years[i + 1 : i + 3]
+    for i in range(0, len(quarters) - min_train_quarters - val_window - 1, val_window):
+        val_quarters = quarters[i : (i + val_window)]
+        train_quarters = quarters[(i + val_window) :]
 
-        # Get all available years before validation period for training
-        train_years = years[i + 3 :]
-
-        # Skip if we don't have enough training years
-        if len(train_years) < min_train_years:
+        if len(train_quarters) < min_train_quarters:
             break
 
-        train = data.filter(pl.col("tdq").dt.year().is_in(train_years))
-        val = data.filter(pl.col("tdq").dt.year().is_in(val_years))
+        train = data.filter(pl.col("tdq").is_in(train_quarters))
+        val = data.filter(pl.col("tdq").is_in(val_quarters))
         splits.append((train, val))
 
     if max_splits and max_splits > 0:

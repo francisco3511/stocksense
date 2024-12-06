@@ -51,7 +51,7 @@ class ModelHandler:
                 return
 
             train = data.filter(
-                (pl.col("tdq") < self.trade_date)
+                (pl.col("tdq") <= self.trade_date - dt.timedelta(days=360))
                 & ~pl.all_horizontal(pl.col(self.target).is_null())
             )
 
