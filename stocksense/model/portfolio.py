@@ -98,10 +98,9 @@ class PortfolioBuilder:
 
         quality_filters = (
             (pl.col("pe") > 0)
-            & (pl.col("ev_ebitda") < 50)
             & (pl.col("saleq_yoy") > -20)
             & (pl.col("fcf_yoy") > -50)
-            & (pl.col("price_mom") > -20)
+            & (pl.col("price_mom") > -25)
         )
         return df.filter(quality_filters)
 

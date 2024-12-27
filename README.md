@@ -112,20 +112,48 @@ The project uses a trading date observation window, which sets 4 portfolio rebal
 
 First, update the stock database:
    ```bash
-   stocksense --update
+   stocksense update
    ```
 
 ### Model Training
 
-Train the model for a given trade date:
+Train the model for a specific trade date:
    ```bash
-   stocksense --train --trade-date YYYY-MM-DD
+   stocksense train --trade-date YYYY-MM-DD
+   ```
+   For example:
+   ```bash
+   stocksense train --trade-date 2024-03-01
+   ```
+   Note: Trade date must be the 1st of March, June, September, or December.
+
+
+Generate an investment portfolio:
+   ```bash
+   stocksense portfolio --trade-date YYYY-MM-DD [--weighting STRATEGY] [--n-stocks N]
    ```
 
-Score stocks for a given trade date:
+   Options:
+   - `--weighting`: Portfolio weighting strategy (`market_cap` or `equal`). Default: `market_cap`
+   - `--n-stocks`: Number of stocks to include in portfolio. Default: 30
+
+   Example:
    ```bash
-   stocksense --score --trade-date YYYY-MM-DD
+   # Generate a market-cap weighted portfolio with 25 stocks
+   stocksense portfolio --trade-date 2024-03-01 --weighting market_cap --n-stocks 25
+
+   # Generate an equal-weighted portfolio with default 30 stocks
+   stocksense portfolio --trade-date 2024-03-01 --weighting equal
    ```
+
+#### Command Reference
+
+```bash
+stocksense --help              # Show available commands
+stocksense update --help       # Show help for update command
+stocksense train --help        # Show help for train command
+stocksense portfolio --help    # Show help for portfolio command
+```
 
 In order to evaluate for the last trading date, don't specify a trade date.
 
