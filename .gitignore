@@ -172,10 +172,12 @@ log/
 .ruff_cache/
 
 # model files
+**/model_base/*
 *.pkl
 
 # reports
-reports/report_*
+reports/scores/scores_*.csv
+reports/portfolios/portfolio_*.xlsx
 
 # references
 references

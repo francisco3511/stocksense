@@ -7,7 +7,7 @@ import polars_talib as plta
 from loguru import logger
 
 from stocksense.config import config
-from stocksense.database_handler import DatabaseHandler
+from stocksense.database import DatabaseHandler
 
 DATA_PATH = Path(__file__).parents[1] / "data"
 FIXTURE_PATH = Path(__file__).parents[2] / "tests" / "fixtures"
@@ -37,11 +37,12 @@ def engineer_features() -> pl.DataFrame:
         df = compute_financial_features(df)
         df = compute_sp500_features(df, index_data)
         df = compute_vix_features(df, vix_data)
-        df = compute_market_features(df, market_df, index_data)
+        df = compute_market_features(df, market_df)
+        df = compute_industry_features(df, info)
         df = compute_growth_features(df)
         df = compute_piotroski_score(df)
         df = compute_performance_targets(df)
-        df = compute_sector_dummies(df, info)
+        df = compute_sector_dummies(df)
 
         logger.success(f"END {df.shape[0]} rows PROCESSED")
     except Exception as e:
@@ -67,13 +68,24 @@ def clean(df: pl.DataFrame) -> pl.DataFrame:
 
     logger.info("START cleaning data")
 
+    df = df.filter(~pl.all_horizontal(pl.col("datadate").is_null()))
     df = df.filter(pl.col("tdq") <= pl.lit(dt.datetime.today().date()))
-    growth_alias = ["mom", "sos", "qoq", "yoy", "2y", "return"]
-    growth_vars = [f for f in df.columns if any(xf in f for xf in growth_alias)]
 
-    for feature in [f for f in df.columns if any(xf in f for xf in growth_vars)]:
+    growth_alias = ["mom", "sos", "qoq", "yoy", "2y"]
+    growth_vars = [f for f in df.columns if any(f.endswith(xf) for xf in growth_alias)]
+
+    for feature in growth_vars:
         df = df.with_columns(pl.col(feature) * 100)
-        df = df.with_columns(df.with_columns(pl.col(feature).clip(-2000, 2000)))
+        if "mom" in feature:
+            df = df.with_columns(pl.col(feature).clip(-50, 50))
+        elif "qoq" in feature or "sos" in feature:
+            df = df.with_columns(pl.col(feature).clip(-150, 150))
+        elif "yoy" in feature:
+            df = df.with_columns(pl.col(feature).clip(-300, 300))
+        elif "2y" in feature:
+            df = df.with_columns(pl.col(feature).clip(-400, 400))
+        else:
+            df = df.with_columns(pl.col(feature).clip(-300, 300))
 
     float_cols = df.select(pl.col(pl.Float64)).columns
     df = df.with_columns(
@@ -85,9 +97,11 @@ def clean(df: pl.DataFrame) -> pl.DataFrame:
             for col in float_cols
         ]
     )
-    df = df.filter(~pl.all_horizontal(pl.col("niq_2y").is_null()))
+
+    df = df.filter(~pl.all_horizontal(pl.col("roa_yoy").is_null()))
+    df = df.filter(~pl.all_horizontal(pl.col("price_2y").is_null()))
     df = df.sort(["tic", "tdq"]).unique(subset=["tic", "tdq"], keep="last", maintain_order=True)
-    df = df.sort(["tic", "rdq"])
+    df = df.sort(["tic", "tdq"])
 
     logger.success(f"{df.shape[0]} rows retained after CLEANING")
     return df
@@ -108,7 +122,6 @@ def compute_trade_date(df: pl.DataFrame) -> pl.DataFrame:
     pl.DataFrame
         Data with trade date intervals.
     """
-
     # correct rdq if it is the same as quarter end date
     df = df.with_columns(
         pl.when(pl.col("rdq") == pl.col("datadate"))
@@ -121,11 +134,22 @@ def compute_trade_date(df: pl.DataFrame) -> pl.DataFrame:
     max_year = df["rdq"].dt.year().max()
 
     quarter_dates = generate_quarter_dates(min_year, max_year)
-    quarter_df = pl.DataFrame({"tdq": quarter_dates}).with_columns(pl.col("tdq").dt.date())
 
-    df = df.sort(by=["rdq", "tic"])
-    df = df.join_asof(quarter_df, left_on="rdq", right_on="tdq", strategy="forward")
-    return df.sort(by=["tic", "rdq"])
+    # Create base DataFrame with all combinations of tic and trade dates
+    unique_tics = df.select("tic").unique()
+    quarter_df = pl.DataFrame({"tdq": quarter_dates}).with_columns(pl.col("tdq").dt.date())
+    base_df = quarter_df.join(unique_tics, how="cross")
+
+    df = base_df.join_asof(
+        df.sort("rdq"),
+        left_on="tdq",
+        right_on="rdq",
+        by="tic",
+        strategy="backward",
+        tolerance=dt.timedelta(days=93),
+    )
+
+    return df.sort(by=["tic", "tdq"])
 
 
 def generate_quarter_dates(start_year: int, end_year: int) -> list:
@@ -192,7 +216,7 @@ def adjust_shares(df: pl.DataFrame) -> pl.DataFrame:
     )
 
     # compute cumulative product of adjustment factors in reverse
-    df = df.sort(by=["tic", "datadate"]).with_columns(
+    df = df.sort(by=["tic", "tdq"]).with_columns(
         pl.col("adjustment_factor")
         .cum_prod(reverse=True)
         .over("tic")
@@ -202,7 +226,7 @@ def adjust_shares(df: pl.DataFrame) -> pl.DataFrame:
     # apply the cumulative adjustment to the financial data
     df = df.with_columns((pl.col("cshoq") * pl.col("cum_adjustment_factor")).alias("cshoq"))
     df = df.with_columns(pl.col("stock_split").cast(pl.Int8))
-    df = df.sort(by=["tic", "rdq"])
+    df = df.sort(by=["tic", "tdq"])
     return df.drop(["csho_ratio", "split_factor", "adjustment_factor", "cum_adjustment_factor"])
 
 
@@ -302,46 +326,76 @@ def compute_insider_trading_features(df: pl.DataFrame, insider_df: pl.DataFrame)
 
 def compute_financial_features(df: pl.DataFrame) -> pl.DataFrame:
     """
-    Computes a selected number of financial ratios.
+    Compute financial ratios and metrics from raw financial data.
+
+    Calculates various financial indicators including:
+    - Profitability ratios (ROA, ROI, ROE)
+    - Margin ratios (Gross, EBITDA, Cash Flow)
+    - Liquidity ratios (Current, Quick, Cash)
+    - Leverage ratios (Debt, Long-term debt)
+    - Efficiency ratios (Inventory, Receivables turnover)
 
     Parameters
     ----------
-    df : pl.DataFrame
-        Financial data of a given stock.
+    df : DataFrame
+        Financial data containing required columns (niq, atq, saleq, etc.)
 
     Returns
     -------
-    pl.DataFrame
-        Data with additional columns.
+    DataFrame
+        DataFrame with additional financial ratio columns
+
+    Notes
+    -----
+    All percentage-based ratios are multiplied by 100 for easier interpretation
     """
+    df = df.sort(by=["tic", "tdq"])
+
+    # Handle edge cases in net income
     df = df.with_columns(
-        pl.when(pl.col("niq") == 0).then(pl.lit(None)).otherwise(pl.col("niq")).alias("niq")
+        [
+            pl.when(pl.col("niq") == 0).then(pl.lit(None)).otherwise(pl.col("niq")).alias("niq"),
+            pl.when(pl.col("cogsq").is_null())
+            .then(pl.lit(0))
+            .otherwise(pl.col("cogsq"))
+            .alias("cogsq"),
+        ]
     )
-    return (
-        df.lazy()
-        .with_columns(
-            (pl.col("niq").rolling_sum(4) / pl.col("atq")).over("tic").alias("roa"),
-            (pl.col("niq") / pl.col("icaptq")).over("tic").alias("roi"),
-            (pl.col("niq").rolling_sum(4) / pl.col("seqq")).over("tic").alias("roe"),
-            ((pl.col("saleq") - pl.col("cogsq")) / pl.col("saleq")).alias("gpm"),
-            (pl.col("ebitdaq") / pl.col("saleq")).alias("ebitdam"),
-            (pl.col("oancfq") / pl.col("saleq")).alias("cfm"),
-            (pl.col("oancfq") - pl.col("capxq")).alias("fcf"),
-            (pl.col("actq") / pl.col("lctq")).alias("cr"),
-            ((pl.col("rectq") + pl.col("cheq")) / pl.col("lctq")).alias("qr"),
-            (pl.col("cheq") / pl.col("lctq")).alias("csr"),
-            (pl.col("ltq") / pl.col("atq")).alias("dr"),
-            (pl.col("ltq") / pl.col("seqq")).alias("der"),
-            (pl.col("ltq") / pl.col("ebitdaq")).alias("debitda"),
-            (pl.col("dlttq") / pl.col("atq")).alias("ltda"),
-            ((pl.col("oancfq") - pl.col("capxq")) / pl.col("dlttq")).alias("ltcr"),
-            (pl.col("saleq") / pl.col("invtq").rolling_mean(2)).over("tic").alias("itr"),
-            (pl.col("saleq") / pl.col("rectq").rolling_mean(2)).over("tic").alias("rtr"),
-            (pl.col("saleq") / pl.col("atq").rolling_mean(2)).over("tic").alias("atr"),
-            pl.col("atq").log().alias("size"),
-        )
-        .collect()
+
+    df = df.lazy().with_columns(
+        # Profitability ratios
+        (pl.col("niq").rolling_sum(4) / pl.col("atq") * 100).over("tic").alias("roa"),
+        (pl.col("niq") / pl.col("icaptq") * 100).over("tic").alias("roi"),
+        (pl.col("niq").rolling_sum(4) / pl.col("seqq")).over("tic").alias("roe"),
+        # Margin ratios
+        ((pl.col("saleq") - pl.col("cogsq")) / pl.col("saleq") * 100).alias("gpm"),
+        (pl.col("ebitdaq") / pl.col("saleq") * 100).alias("ebitdam"),
+        (pl.col("oancfq") / pl.col("saleq") * 100).alias("cfm"),
+        (pl.col("oancfq") - pl.col("capxq")).alias("fcf"),
+        # Liquidity ratios
+        (pl.col("actq") / pl.col("lctq") * 100).alias("cr"),
+        ((pl.col("rectq") + pl.col("cheq")) / pl.col("lctq") * 100).alias("qr"),
+        (pl.col("cheq") / pl.col("lctq") * 100).alias("csr"),
+        # Leverage ratios
+        (pl.col("ltq") / pl.col("atq") * 100).alias("dr"),
+        (pl.col("ltq") / pl.col("seqq") * 100).alias("der"),
+        (pl.col("ltq") / pl.col("ebitdaq") * 100).alias("debitda"),
+        (pl.col("dlttq") / pl.col("atq") * 100).alias("ltda"),
+        ((pl.col("oancfq") - pl.col("capxq")) / pl.col("dlttq") * 100).alias("ltcr"),
+        # Efficiency ratios
+        (pl.col("saleq") / pl.col("invtq").rolling_mean(2)).over("tic").alias("itr"),
+        (pl.col("saleq") / pl.col("rectq").rolling_mean(2)).over("tic").alias("rtr"),
+        (pl.col("saleq") / pl.col("atq").rolling_mean(2)).over("tic").alias("atr"),
+        pl.col("atq").log().alias("size"),
     )
+
+    df = df.with_columns(
+        # Earnings Stability
+        pl.col("niq").rolling_std(8).over("tic").alias("earnings_vol"),
+        pl.col("gpm").rolling_std(8).over("tic").alias("margin_vol"),
+    )
+
+    return df.collect()
 
 
 def compute_sp500_features(df: pl.DataFrame, index_df: pl.DataFrame) -> pl.DataFrame:
@@ -357,43 +411,37 @@ def compute_sp500_features(df: pl.DataFrame, index_df: pl.DataFrame) -> pl.DataF
     index_df = index_df.sort(by=["date"])
     df = df.sort(by=["tdq", "tic"])
 
-    # compute index past returns
+    index_df = compute_sp500_forward_returns(index_df)
     index_df = index_df.with_columns(
-        pl.col("close").pct_change(config.processing.trading_days_month).alias("index_mom"),
-        pl.col("close").pct_change(config.processing.trading_days_quarter).alias("index_qoq"),
-        pl.col("close").pct_change(config.processing.trading_days_semester).alias("index_sos"),
-        pl.col("close").pct_change(config.processing.trading_days_year).alias("index_yoy"),
-        pl.col("close").pct_change(config.processing.trading_days_2year).alias("index_2y"),
+        (pl.col("close").pct_change(config.processing.trade_days_month)).alias("index_mom"),
+        (pl.col("close").pct_change(config.processing.trade_days_quarter)).alias("index_qoq"),
+        (pl.col("close").pct_change(config.processing.trade_days_semester)).alias("index_sos"),
+        (pl.col("close").pct_change(config.processing.trade_days_year)).alias("index_yoy"),
+        (pl.col("close").pct_change(config.processing.trade_days_2year)).alias("index_2y"),
     )
 
     # compute volatily of index
     index_df = index_df.with_columns(
         (pl.col("close") / pl.col("close").shift(1)).log().alias("log_return")
     ).with_columns(
-        pl.col("log_return")
-        .rolling_std(config.processing.trading_days_month)
-        .alias("index_vol_mom"),
-        pl.col("log_return")
-        .rolling_std(config.processing.trading_days_quarter)
-        .alias("index_vol_qoq"),
-        pl.col("log_return")
-        .rolling_std(config.processing.trading_days_semester)
-        .alias("index_vol_sos"),
-        pl.col("log_return")
-        .rolling_std(config.processing.trading_days_year)
-        .alias("index_vol_yoy"),
-        pl.col("log_return")
-        .rolling_std(config.processing.trading_days_2year)
-        .alias("index_vol_2y"),
+        (pl.col("log_return").rolling_std(config.processing.trade_days_month)).alias(
+            "index_vol_mom"
+        ),
+        (pl.col("log_return").rolling_std(config.processing.trade_days_quarter)).alias(
+            "index_vol_qoq"
+        ),
+        (pl.col("log_return").rolling_std(config.processing.trade_days_semester)).alias(
+            "index_vol_sos"
+        ),
+        (pl.col("log_return").rolling_std(config.processing.trade_days_year)).alias(
+            "index_vol_yoy"
+        ),
+        (pl.col("log_return").rolling_std(config.processing.trade_days_2year)).alias(
+            "index_vol_2y"
+        ),
     )
 
-    index_df = index_df.rename(
-        {
-            "date": "index_date",
-            "close": "index_close",
-        }
-    )
-
+    index_df = index_df.rename({"date": "index_date", "close": "index_close"})
     index_df = index_df.select(
         [
             "index_date",
@@ -408,8 +456,13 @@ def compute_sp500_features(df: pl.DataFrame, index_df: pl.DataFrame) -> pl.DataF
             "index_vol_sos",
             "index_vol_yoy",
             "index_vol_2y",
+            "avg_index_fwd_return_1Q",
+            "avg_index_fwd_return_2Q",
+            "avg_index_fwd_return_3Q",
+            "avg_index_fwd_return_4Q",
         ]
     )
+
     df = df.join_asof(
         index_df,
         left_on="tdq",
@@ -417,7 +470,45 @@ def compute_sp500_features(df: pl.DataFrame, index_df: pl.DataFrame) -> pl.DataF
         strategy="backward",
         tolerance=dt.timedelta(days=7),
     )
-    return df.sort(by=["tic", "rdq"])
+    return df.sort(by=["tic", "tdq"])
+
+
+def compute_sp500_forward_returns(index_df: pl.DataFrame) -> pl.DataFrame:
+    """
+    Compute forward return features.
+    """
+
+    return_ranges = [
+        (config.processing.trade_days_month, "1M"),
+        (config.processing.trade_days_quarter, "1Q"),
+        (config.processing.trade_days_semester, "2Q"),
+        (config.processing.trade_days_third_quarter, "3Q"),
+        (config.processing.trade_days_year, "4Q"),
+    ]
+
+    df = index_df.lazy()
+    df = df.with_columns(
+        [
+            *[
+                ((pl.col("close").shift(-i) / pl.col("close")) - 1).alias(f"fret_{i}")
+                for i in range(return_ranges[0][0], return_ranges[-1][0] + 1)
+            ],
+        ]
+    )
+
+    for i in range(len(return_ranges) - 1):
+        start = return_ranges[i][0]
+        end = return_ranges[i + 1][0]
+        df = df.with_columns(
+            [
+                pl.mean_horizontal([f"fret_{i}" for i in range(start, end + 1)]).alias(
+                    f"avg_index_fwd_return_{return_ranges[i + 1][1]}"
+                ),
+            ]
+        )
+
+    df = df.drop([f"fret_{i}" for i in range(return_ranges[0][0], return_ranges[-1][0] + 1)])
+    return df.collect()
 
 
 def compute_vix_features(df: pl.DataFrame, vix_df: pl.DataFrame) -> pl.DataFrame:
@@ -452,14 +543,19 @@ def compute_vix_features(df: pl.DataFrame, vix_df: pl.DataFrame) -> pl.DataFrame
         strategy="backward",
         tolerance=dt.timedelta(days=7),
     )
-    return df.sort(by=["tic", "rdq"])
+    return df.sort(by=["tic", "tdq"])
 
 
-def compute_market_features(
-    df: pl.DataFrame, market_df: pl.DataFrame, index_df: pl.DataFrame
-) -> pl.DataFrame:
+def compute_market_features(df: pl.DataFrame, market_df: pl.DataFrame) -> pl.DataFrame:
     """
-    Compute market-related ratios.
+    Compute market-related features and technical indicators.
+
+    Processes market data to calculate:
+    - Forward returns
+    - Volume metrics
+    - Volatility indicators
+    - Price momentum
+    - Technical analysis indicators
 
     Parameters
     ----------
@@ -467,41 +563,85 @@ def compute_market_features(
         Financial data of a given stock.
     market_df : pl.DataFrame
         Market data.
-    index_df : pl.DataFrame
-        Index price data.
 
     Returns
     -------
     pl.DataFrame
-        Main dataset with added ratios.
+        Dataset with additional market-related features
     """
 
-    market_df = compute_volume_features(market_df)
-    market_df = compute_daily_momentum_features(market_df)
-    market_df = compute_daily_volatility_features(market_df)
-
-    df = df.sort(by=["rdq", "tic"])
-    df = df.join_asof(
-        market_df.drop(["volume"]),
-        left_on="tdq",
-        right_on="date",
-        by="tic",
-        strategy="backward",
-        tolerance=dt.timedelta(days=7),
-    ).join_asof(
-        market_df.select(["date", "tic", "close"]).rename(
-            {"date": "rdq_date", "close": "rdq_close"}
-        ),
-        left_on="rdq",
-        right_on="rdq_date",
-        by="tic",
-        strategy="forward",
-        tolerance=dt.timedelta(days=7),
+    processed_market = (
+        market_df.pipe(compute_forward_returns)
+        .pipe(compute_volume_features)
+        .pipe(compute_volatility_features)
+        .pipe(compute_price_growth_features)
+        .pipe(compute_technical_features)
     )
-    df = df.sort(by=["tic", "rdq"])
 
-    df = compute_hybrid_features(df)
-    return df
+    # Join with main dataset
+    df = (
+        df.sort(by=["tdq", "tic"])
+        .join_asof(
+            processed_market.drop(["volume"]),
+            left_on="tdq",
+            right_on="date",
+            by="tic",
+            strategy="backward",
+            tolerance=dt.timedelta(days=7),
+        )
+        .join_asof(
+            processed_market.select(["date", "tic", "close"]).rename(
+                {"date": "rdq_date", "close": "rdq_close"}
+            ),
+            left_on="rdq",
+            right_on="rdq_date",
+            by="tic",
+            strategy="forward",
+            tolerance=dt.timedelta(days=7),
+        )
+    )
+
+    return compute_hybrid_features(df)
+
+
+def compute_forward_returns(df: pl.DataFrame) -> pl.DataFrame:
+    """
+    Compute forward return features.
+    """
+
+    return_ranges = [
+        (config.processing.trade_days_month, "1M"),
+        (config.processing.trade_days_quarter, "1Q"),
+        (config.processing.trade_days_semester, "2Q"),
+        (config.processing.trade_days_third_quarter, "3Q"),
+        (config.processing.trade_days_year, "4Q"),
+    ]
+
+    df = df.lazy().sort(["tic", "date"])
+    df = df.with_columns(
+        [
+            *[
+                ((pl.col("adj_close").shift(-i) / pl.col("adj_close")) - 1)
+                .over("tic")
+                .alias(f"fret_{i}")
+                for i in range(return_ranges[0][0], return_ranges[-1][0] + 1)
+            ],
+        ]
+    )
+
+    for i in range(len(return_ranges) - 1):
+        start = return_ranges[i][0]
+        end = return_ranges[i + 1][0]
+        df = df.with_columns(
+            [
+                pl.mean_horizontal([f"fret_{i}" for i in range(start, end + 1)]).alias(
+                    f"fwd_return_{return_ranges[i + 1][1]}"
+                ),
+            ]
+        )
+
+    df = df.drop([f"fret_{i}" for i in range(return_ranges[0][0], return_ranges[-1][0] + 1)])
+    return df.collect()
 
 
 def compute_volume_features(df: pl.DataFrame) -> pl.DataFrame:
@@ -518,6 +658,7 @@ def compute_volume_features(df: pl.DataFrame) -> pl.DataFrame:
     pl.DataFrame
         DataFrame with normalized volume features
     """
+    df = df.sort(by=["tic", "date"])
     df = df.with_columns(
         [
             pl.col("volume").rolling_mean(20).over("tic").alias("volume_ma20_raw"),
@@ -535,46 +676,7 @@ def compute_volume_features(df: pl.DataFrame) -> pl.DataFrame:
     ).drop(["volume_ma20_raw", "volume_ma50_raw", "volume_annual_mean"])
 
 
-def compute_daily_momentum_features(df: pl.DataFrame) -> pl.DataFrame:
-    """
-    Compute daily price momentum features.
-
-    Parameters
-    ----------
-    df : pl.DataFrame
-        Daily market data for all stocks.
-
-    Returns
-    -------
-    pl.DataFrame
-        Market data with momementum features.
-    """
-    return df.with_columns(
-        plta.rsi(pl.col("close"), timeperiod=14).over("tic").alias("rsi_14d"),
-        plta.rsi(pl.col("close"), timeperiod=30).over("tic").alias("rsi_30d"),
-        plta.rsi(pl.col("close"), timeperiod=60).over("tic").alias("rsi_60d"),
-        plta.rsi(pl.col("close"), timeperiod=90).over("tic").alias("rsi_90d"),
-        plta.rsi(pl.col("close"), timeperiod=360).over("tic").alias("rsi_1y"),
-        pl.col("close")
-        .pct_change(config.processing.trading_days_month)
-        .over("tic")
-        .alias("price_mom"),
-        pl.col("close")
-        .pct_change(config.processing.trading_days_quarter)
-        .over("tic")
-        .alias("price_qoq"),
-        pl.col("close")
-        .pct_change(config.processing.trading_days_year)
-        .over("tic")
-        .alias("price_yoy"),
-        pl.col("close")
-        .pct_change(config.processing.trading_days_2year)
-        .over("tic")
-        .alias("price_2y"),
-    )
-
-
-def compute_daily_volatility_features(df: pl.DataFrame) -> pl.DataFrame:
+def compute_volatility_features(df: pl.DataFrame) -> pl.DataFrame:
     """
     Compute daily price volatility features.
 
@@ -588,22 +690,130 @@ def compute_daily_volatility_features(df: pl.DataFrame) -> pl.DataFrame:
     pl.DataFrame
         Market data with momementum features.
     """
+    df = df.sort(by=["tic", "date"])
     df = df.with_columns(
         (pl.col("close") / pl.col("close").shift(1)).log().over("tic").alias("log_return")
     )
-    return df.with_columns(
+    df = df.with_columns(
+        # Volatility features
         pl.col("log_return")
-        .rolling_std(config.processing.trading_days_month)
+        .rolling_std(config.processing.trade_days_month)
         .over("tic")
         .alias("vol_mom"),
         pl.col("log_return")
-        .rolling_std(config.processing.trading_days_quarter)
+        .rolling_std(config.processing.trade_days_quarter)
         .over("tic")
         .alias("vol_qoq"),
         pl.col("log_return")
-        .rolling_std(config.processing.trading_days_year)
+        .rolling_std(config.processing.trade_days_semester)
+        .over("tic")
+        .alias("vol_sos"),
+        pl.col("log_return")
+        .rolling_std(config.processing.trade_days_year)
         .over("tic")
         .alias("vol_yoy"),
+        pl.col("log_return")
+        .rolling_std(config.processing.trade_days_2year)
+        .over("tic")
+        .alias("vol_2y"),
+    )
+    df = df.with_columns(
+        # Volatility regime
+        (pl.col("vol_mom") > pl.col("vol_mom").rolling_mean(20).over("tic"))
+        .cast(pl.Int8)
+        .alias("high_volatility_regime")
+    )
+    return df
+
+
+def compute_price_growth_features(df: pl.DataFrame) -> pl.DataFrame:
+    """
+    Compute daily price momentum features.
+
+    Parameters
+    ----------
+    df : pl.DataFrame
+        Daily market data for all stocks.
+
+    Returns
+    -------
+    pl.DataFrame
+        Market data with momementum features.
+    """
+    df = df.sort(by=["tic", "date"])
+
+    df = df.with_columns(
+        (pl.col("close") > pl.col("close").rolling_max(252).over("tic"))
+        .cast(pl.Int8)
+        .alias("yearly_high"),
+        (pl.col("close") < pl.col("close").rolling_min(252).over("tic"))
+        .cast(pl.Int8)
+        .alias("yearly_low"),
+    )
+
+    df = df.with_columns(
+        pl.col("close")
+        .pct_change(config.processing.trade_days_month)
+        .over("tic")
+        .alias("price_mom"),
+        pl.col("close")
+        .pct_change(config.processing.trade_days_quarter)
+        .over("tic")
+        .alias("price_qoq"),
+        pl.col("close")
+        .pct_change(config.processing.trade_days_semester)
+        .over("tic")
+        .alias("price_sos"),
+        pl.col("close")
+        .pct_change(config.processing.trade_days_year)
+        .over("tic")
+        .alias("price_yoy"),
+        pl.col("close")
+        .pct_change(config.processing.trade_days_2year)
+        .over("tic")
+        .alias("price_2y"),
+    )
+
+    return df.with_columns(
+        (pl.col("price_qoq") / pl.col("vol_qoq")).alias("price_risk_quarter"),
+        (pl.col("price_sos") / pl.col("vol_sos")).alias("price_risk_semester"),
+        (pl.col("price_yoy") / pl.col("vol_yoy")).alias("price_risk_year"),
+        (pl.col("price_2y") / pl.col("vol_2y")).alias("price_risk_2year"),
+    )
+
+
+def compute_technical_features(df: pl.DataFrame) -> pl.DataFrame:
+    """
+    Add technical analysis features using polars_talib.
+    """
+    df = df.sort(["tic", "date"])
+    df = df.with_columns(
+        [
+            # RSI / EMA indicators
+            plta.rsi(pl.col("close"), timeperiod=14).over("tic").alias("rsi_14d"),
+            plta.rsi(pl.col("close"), timeperiod=30).over("tic").alias("rsi_30d"),
+            plta.rsi(pl.col("close"), timeperiod=60).over("tic").alias("rsi_60d"),
+            plta.rsi(pl.col("close"), timeperiod=90).over("tic").alias("rsi_90d"),
+            plta.ema(pl.col("close"), timeperiod=20).over("tic").alias("ema_20d"),
+            plta.ema(pl.col("close"), timeperiod=50).over("tic").alias("ema_50d"),
+            plta.ema(pl.col("close"), timeperiod=200).over("tic").alias("ema_200d"),
+        ]
+    )
+    return df.with_columns(
+        [
+            # Moving Average Crossovers
+            (pl.col("ema_20d") > pl.col("ema_50d")).cast(pl.Int8).alias("golden_cross_20_50"),
+            (pl.col("ema_50d") > pl.col("ema_200d")).cast(pl.Int8).alias("golden_cross_50_200"),
+            # Price Distance from Moving Averages
+            ((pl.col("close") - pl.col("ema_20d")) / pl.col("ema_20d")).alias("ma20_distance"),
+            ((pl.col("close") - pl.col("ema_50d")) / pl.col("ema_50d")).alias("ma50_distance"),
+            # Momentum Divergence
+            (pl.col("rsi_14d") < 30).cast(pl.Int8).alias("oversold"),
+            (pl.col("rsi_14d") > 70).cast(pl.Int8).alias("overbought"),
+            # Price Trend Features
+            (pl.col("close") > pl.col("ema_20d")).cast(pl.Int8).alias("above_ma20"),
+            (pl.col("close") > pl.col("ema_50d")).cast(pl.Int8).alias("above_ma50"),
+        ]
     )
 
 
@@ -621,19 +831,21 @@ def compute_hybrid_features(df: pl.DataFrame) -> pl.DataFrame:
     pl.DataFrame
         Dataset with market/financial ratios.
     """
-    df = df.sort(by=["tic", "rdq"])
-    return (
+    df = df.sort(by=["tic", "tdq"])
+    df = (
         df.with_columns(
-            ((pl.col("close") - pl.col("rdq_close")) / pl.col("rdq_close") * 100).alias(
+            # Relative Momentum features
+            (((pl.col("close") - pl.col("rdq_close")) / pl.col("rdq_close")) * 100).alias(
                 "earn_drift"
             ),
-            (pl.col("price_mom") / pl.col("index_mom")).alias("momentum_mom"),
-            (pl.col("price_qoq") / pl.col("index_qoq")).alias("momentum_qoq"),
-            (pl.col("price_yoy") / pl.col("index_yoy")).alias("momentum_yoy"),
-            (pl.col("price_2y") / pl.col("index_2y")).alias("momentum_2y"),
-            (pl.col("vol_mom") / pl.col("index_vol_mom")).alias("rel_vol_mom"),
-            (pl.col("vol_qoq") / pl.col("index_vol_qoq")).alias("rel_vol_qoq"),
-            (pl.col("vol_yoy") / pl.col("index_vol_yoy")).alias("rel_vol_yoy"),
+            (pl.col("price_mom") / pl.col("index_mom")).alias("momentum_month"),
+            (pl.col("price_qoq") / pl.col("index_qoq")).alias("momentum_quarter"),
+            (pl.col("price_yoy") / pl.col("index_yoy")).alias("momentum_year"),
+            (pl.col("price_2y") / pl.col("index_2y")).alias("momentum_2year"),
+            (pl.col("vol_mom") / pl.col("index_vol_mom")).alias("rel_vol_month"),
+            (pl.col("vol_qoq") / pl.col("index_vol_qoq")).alias("rel_vol_quarter"),
+            (pl.col("vol_yoy") / pl.col("index_vol_yoy")).alias("rel_vol_year"),
+            (pl.col("vol_2y") / pl.col("index_vol_2y")).alias("rel_vol_2year"),
             (pl.col("niq").rolling_sum(4) / pl.col("cshoq")).over("tic").alias("eps"),
         )
         .with_columns(
@@ -644,10 +856,45 @@ def compute_hybrid_features(df: pl.DataFrame) -> pl.DataFrame:
             (pl.col("mkt_cap") + pl.col("ltq") - pl.col("cheq")).alias("ev"),
             (pl.col("mkt_cap") / (pl.col("atq") - pl.col("ltq"))).alias("pb"),
             (pl.col("mkt_cap") / pl.col("saleq").rolling_sum(4)).over("tic").alias("ps"),
+            (pl.col("mkt_cap") / pl.col("ebitdaq").rolling_sum(4)).over("tic").alias("ev_ebitda"),
+            ((pl.col("mkt_cap") / pl.col("mkt_cap").sum().over("tdq")) * 100).alias("mkt_rel"),
         )
-        .with_columns(
-            (pl.col("ev") / pl.col("ebitdaq").rolling_sum(4)).over("tic").alias("ev_ebitda")
-        )
+    )
+
+    return df.with_columns(
+        pl.col("pe").clip(-200, 200).alias("pe"),
+        pl.col("pb").clip(-30, 30).alias("pb"),
+        pl.col("ps").clip(0, 50).alias("ps"),
+        pl.col("ev_ebitda").clip(0, 150).alias("ev_ebitda"),
+    )
+
+
+def compute_industry_features(df: pl.DataFrame, info: pl.DataFrame) -> pl.DataFrame:
+    """
+    Add industry-relative metrics
+    """
+    df = df.join(info.select(["tic", "sector"]), on="tic", how="left")
+    df = df.filter(pl.col("sector").is_in(config.processing.sectors))
+
+    return df.with_columns(
+        [
+            # Industry Relative Ratios
+            (pl.col("pe") / pl.col("pe").mean().over(["tdq", "sector"])).alias("pe_sec"),
+            # Industry Momentum
+            pl.col("price_yoy").mean().over(["tdq", "sector"]).alias("momentum_sec_yoy"),
+            pl.col("price_qoq").mean().over(["tdq", "sector"]).alias("momentum_sec_qoq"),
+            # Industry Concentration
+            pl.col("mkt_cap").sum().over(["tdq", "sector"]).alias("size_sec"),
+            # Size
+            (pl.col("mkt_cap") > pl.col("mkt_cap").median().over(["tdq", "sector"]))
+            .cast(pl.Int8)
+            .alias("size_factor"),
+            (pl.col("mkt_cap") / pl.col("mkt_cap").sum().over(["tdq", "sector"]) * 100).alias(
+                "mkt_rel_sec"
+            ),
+            # Relative Profitability (quality factor)
+            (pl.col("roa") - pl.col("roa").mean().over(["tdq", "sector"])).alias("roa_sec"),
+        ]
     )
 
 
@@ -714,17 +961,19 @@ def compute_growth_features(df: pl.DataFrame) -> pl.DataFrame:
         "pb": [year_lag, two_year_lag],
         "ps": [year_lag, two_year_lag],
         "eps": [year_lag, two_year_lag],
-        "ev_ebitda": [year_lag, two_year_lag],
+        "ev_ebitda": [year_lag],
         "ltcr": [year_lag],
         "itr": [year_lag],
         "rtr": [year_lag],
         "atr": [year_lag],
+        "size": [year_lag],
+        "roa_sec": [quarter_lag, year_lag],
     }
 
     expressions = []
 
     # add standard growth calculations
-    df = df.sort(by=["tic", "rdq"])
+    df = df.sort(by=["tic", "tdq"])
     for metric, periods in metrics.items():
         for period in periods:
             suffix = "qoq" if period == quarter_lag else "yoy" if period == year_lag else "2y"
@@ -780,10 +1029,6 @@ def compute_piotroski_score(df: pl.DataFrame) -> pl.DataFrame:
             ).alias("f_score")
         ]
     )
-    df = df.with_columns(
-        (pl.col("f_score") - pl.col("f_score").shift(1)).over("tic").alias("f_score_gr1"),
-        (pl.col("f_score") - pl.col("f_score").shift(4)).over("tic").alias("f_score_gr4"),
-    )
     component_cols = [
         "f_roa",
         "f_ocf",
@@ -812,71 +1057,64 @@ def compute_performance_targets(df: pl.DataFrame) -> pl.DataFrame:
     pl.DataFrame
         Dataset with each observation associated to forward returns and flags.
     """
-    df = df.sort(["tic", "rdq"])
+    df = df.sort(["tic", "tdq"])
+
+    # Compute forward volatilities for adjusted returns
     df = df.with_columns(
-        (
-            (
-                pl.col("index_close").shift(-config.processing.prediction_horizon)
-                / pl.col("index_close")
+        [
+            pl.col("vol_yoy").shift(-4).over("tic").clip(0.01, 0.1).alias("forward_vol_yoy"),
+            pl.col("vol_sos").shift(-2).over("tic").clip(0.01, 0.1).alias("forward_vol_sos"),
+            pl.col("vol_qoq").shift(-1).over("tic").clip(0.01, 0.1).alias("forward_vol_qoq"),
+        ]
+    )
+
+    fwd_return_horizons = ["1Q", "2Q", "3Q", "4Q"]
+    vol_horizons = ["qoq", "qoq", "sos", "yoy"]
+    excess_margins = [6.0, 12.0, 25.0, 30.0]
+
+    for i, horizon in enumerate(fwd_return_horizons):
+        df = df.with_columns(
+            (pl.col(f"fwd_return_{horizon}") - pl.col(f"avg_index_fwd_return_{horizon}")).alias(
+                f"excess_return_{horizon}"
             )
-            - 1
         )
-        .over("tic")
-        .alias("index_freturn"),
-        (
-            (pl.col("adj_close").shift(-config.processing.prediction_horizon) / pl.col("adj_close"))
-            - 1
+        df = df.with_columns(
+            (pl.col(f"excess_return_{horizon}") / pl.col(f"forward_vol_{vol_horizons[i]}"))
+            .clip(-100, 100)
+            .alias(f"sharpe_ratio_{horizon}")
         )
-        .over("tic")
-        .alias("freturn"),
-        ((pl.col("adj_close").shift(-1) / pl.col("adj_close")) - 1).over("tic").alias("freturn_1q"),
-        ((pl.col("adj_close").shift(-2) / pl.col("adj_close")) - 1).over("tic").alias("freturn_2q"),
-        ((pl.col("adj_close").shift(-3) / pl.col("adj_close")) - 1).over("tic").alias("freturn_3q"),
-        ((pl.col("adj_close").shift(-4) / pl.col("adj_close")) - 1).over("tic").alias("freturn_4q"),
-    )
-    df = df.with_columns((pl.col("freturn") - pl.col("index_freturn")).alias("adj_freturn"))
-    df = df.with_columns(
-        (pl.col("adj_freturn") > config.processing.over_performance_threshold)
-        .cast(pl.Int8)
-        .alias("adj_fperf"),
-        (pl.col("freturn_1q") > config.processing.performance_threshold)
-        .cast(pl.Int8)
-        .alias("fperf_1q"),
-        (pl.col("freturn_2q") > config.processing.performance_threshold)
-        .cast(pl.Int8)
-        .alias("fperf_2q"),
-        (pl.col("freturn_3q") > config.processing.performance_threshold)
-        .cast(pl.Int8)
-        .alias("fperf_3q"),
-        (pl.col("freturn_4q") > config.processing.performance_threshold)
-        .cast(pl.Int8)
-        .alias("fperf_4q"),
-    ).with_columns(
-        ((pl.col("fperf_1q") + pl.col("fperf_2q") + pl.col("fperf_3q") + pl.col("fperf_4q")) > 0)
-        .cast(pl.Int8)
-        .alias("fperf")
-    )
-    component_cols = [
-        "freturn_1q",
-        "freturn_2q",
-        "freturn_3q",
-        "freturn_4q",
-        "fperf_1q",
-        "fperf_2q",
-        "fperf_3q",
-        "fperf_4q",
-    ]
-    return df.drop(component_cols)
+        df = df.with_columns(
+            (pl.col(f"fwd_return_{horizon}") / pl.col(f"forward_vol_{vol_horizons[i]}"))
+            .clip(-100, 100)
+            .alias(f"risk_return_{horizon}")
+        )
+        df = df.with_columns(
+            (pl.col(f"fwd_return_{horizon}") * 100).clip(-200, 200).alias(f"fwd_return_{horizon}"),
+            (pl.col(f"excess_return_{horizon}") * 100)
+            .clip(-100, 100)
+            .alias(f"excess_return_{horizon}"),
+        )
+        df = df.with_columns(
+            (pl.col(f"fwd_return_{horizon}") > excess_margins[i])
+            .cast(pl.Int8)
+            .alias(f"fwd_return_{horizon}_hit"),
+            (pl.col(f"excess_return_{horizon}") > (excess_margins[i] / 2))
+            .cast(pl.Int8)
+            .alias(f"excess_return_{horizon}_hit"),
+            (pl.col(f"risk_return_{horizon}") > (excess_margins[i] / 2))
+            .cast(pl.Int8)
+            .alias(f"risk_return_{horizon}_hit"),
+        )
+
+    return df
 
 
-def compute_sector_dummies(df: pl.DataFrame, info: pl.DataFrame) -> pl.DataFrame:
+def compute_sector_dummies(df: pl.DataFrame) -> pl.DataFrame:
     """
     Compute sector dummies.
     """
-    df = df.join(info.select(["tic", "sector"]), on="tic", how="left")
-    df = df.filter(pl.col("sector").is_in(config.processing.sectors))
+    df = df.sort(["tic", "tdq"])
     df = df.to_dummies(columns=["sector"])
-    df = df.sort(["tic", "rdq"])
     df = df.with_columns([pl.col(c).cast(pl.Int8) for c in df.columns if c.startswith("sector_")])
     df = df.rename(
         {col: col.lower().replace(" ", "_") for col in df.columns if col.startswith("sector_")}
@@ -903,4 +1141,4 @@ def filter_active_stocks(df: pl.DataFrame, info: pl.DataFrame) -> pl.DataFrame:
     df = df.join(info.select(["tic", "date_added", "date_removed"]), on="tic", how="left")
     df = df.filter((pl.col("date_removed").is_null() | (pl.col("tdq") <= pl.col("date_removed"))))
     df = df.drop(["date_added", "date_removed"])
-    return df.sort(["tic", "rdq"])
+    return df.sort(["tic", "tdq"])

@@ -2,6 +2,7 @@
 'month_trading_days': 21
 'quarter_trading_days': 61
 'semester_trading_days': 126
+'third_quarter_trading_days': 183
 'year_trading_days': 252
 'two_year_trading_days': 504
 'prediction_horizon': 4 # quarters

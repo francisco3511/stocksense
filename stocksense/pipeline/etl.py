@@ -7,7 +7,8 @@ import polars as pl
 from loguru import logger
 from tqdm import tqdm
 
-from stocksense.database_handler import DatabaseHandler
+from stocksense.config import ConfigManager
+from stocksense.database import DatabaseHandler
 
 from .scraper import Scraper
 
@@ -22,13 +23,30 @@ class ETL:
     transformation and DB ingestion processes.
     """
 
-    def __init__(self, config, stocks: Optional[list[str]] = None):
+    def __init__(self, config: ConfigManager, stocks: Optional[list[str]] = None):
         self.db: DatabaseHandler = DatabaseHandler()
         self.db_schema: dict = config.database.db_schema
         self.base_date: str = config.scraping.base_date
         self.fin_source: str = "yfinance"
         self.historical_data_path: Path = DATA_PATH / "interim"
+        self._update_index_listings()
         self.stocks: list[str] = stocks or self._set_default_stocks()
+
+    def _update_index_listings(self) -> None:
+        """
+        Update the S&P500 index constituents in the database.
+        """
+        logger.info("updating S&P500 control table")
+
+        stock_df = self.db.fetch_stock()
+        sp500_df = Scraper.scrape_sp500_constituents()
+        additions, removals = Scraper.scrape_sp500_changes()
+
+        last_constituents = stock_df.filter(pl.col("date_removed").is_null())["tic"].to_list()
+        current_constituents = sp500_df["tic"].to_list()
+
+        self._delist_stocks(last_constituents, current_constituents, removals)
+        self._add_new_stocks(last_constituents, sp500_df)
 
     def _set_default_stocks(self) -> list[str]:
         """
@@ -42,38 +60,22 @@ class ETL:
         logger.info("setting default S&P500 stock tickers")
         stock_data = self.db.fetch_stock()
         if stock_data.is_empty():
-            self.set_index_listings()
+            self._set_index_listings()
 
-        # fetch data S&P500 stocks and recent delisted stocks
+        # fetch S&P500 stocks and recently delisted stocks
         stock_data = stock_data.filter(
             pl.col("date_removed").is_null()
             | (pl.col("date_removed") >= (dt.datetime.now().date() - dt.timedelta(days=360)))
         )
-        return stock_data["tic"].to_list()
+        return sorted(stock_data["tic"].to_list())
 
-    def set_index_listings(self) -> None:
+    def _set_index_listings(self) -> None:
         """
         Set index stock control table.
         """
         sp500_df = Scraper.scrape_sp500_constituents()
         sp500_df = sp500_df.with_columns(pl.lit(None).alias("date_removed"))
         self.db.insert_stock(sp500_df[self.db_schema["stock"]])
-
-    def update_index_listings(self) -> None:
-        """
-        Update the S&P500 index constituents in the database.
-        """
-        logger.info("updating S&P500 index listings")
-
-        stock_df = self.db.fetch_stock()
-        sp500_df = Scraper.scrape_sp500_constituents()
-        additions, removals = Scraper.scrape_sp500_changes()
-
-        last_constituents = stock_df.filter(pl.col("date_removed").is_null())["tic"].to_list()
-        current_constituents = sp500_df["tic"].to_list()
-
-        self._delist_stocks(last_constituents, current_constituents, removals)
-        self._add_new_stocks(last_constituents, sp500_df)
 
     def _delist_stocks(
         self, last_constituents: list[str], current_constituents: list[str], removals: pl.DataFrame
@@ -91,6 +93,7 @@ class ETL:
             S&P500 changes data.
         """
         removals_list = removals["tic"].to_list()
+        removed_stocks = []
         for tic in last_constituents:
             if tic not in current_constituents:
                 if tic in removals_list:
@@ -102,7 +105,9 @@ class ETL:
                 else:
                     today = dt.datetime.now().date()
                     self.db.update_stock(tic, {"date_removed": today})
+                removed_stocks.append(tic)
                 logger.info(f"{tic}: delisted from S&P500")
+        logger.info(f"removed {removed_stocks} from S&P500 index")
         return
 
     def _add_new_stocks(self, last_constituents: list[str], sp500_df: pl.DataFrame) -> None:
@@ -112,7 +117,7 @@ class ETL:
         logger.info(f"added {new_stocks['tic'].to_list()} to S&P500 index")
         return
 
-    def is_empty(self):
+    def is_empty(self) -> bool:
         """
         Check if no stocks were assigned to ETL process.
         """
@@ -128,6 +133,7 @@ class ETL:
         self.extract_sp_500()
         self.extract_vix()
         self.extract_all_stocks()
+        return
 
     def extract_sp_500(self) -> None:
         """
@@ -216,7 +222,7 @@ class ETL:
         try:
             info = scraper.get_stock_info()
             self.db.insert_info(info)
-            logger.info(f"{tic}: updated stock info")
+            logger.success(f"{tic}: updated stock info")
             return True
         except Exception:
             logger.error(f"{tic}: info extraction FAILED")

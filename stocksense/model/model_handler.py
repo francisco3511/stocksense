@@ -9,10 +9,10 @@ from loguru import logger
 from stocksense.config import config
 
 from .genetic_algorithm import GeneticAlgorithm, fitness_function_wrapper
-from .xgboost_model import XGBoostModel
+from .xgboost_model import XGBoostClassifier
 
 MODEL_DIR = Path(__file__).parents[1] / "model" / "model_base"
-REPORT_DIR = Path(__file__).parents[2] / "reports"
+REPORT_DIR = Path(__file__).parents[2] / "reports" / "scores"
 
 warnings.filterwarnings("ignore")
 
@@ -25,15 +25,16 @@ class ModelHandler:
 
     def __init__(self, trade_date: Optional[dt.datetime] = None):
         self.features = config.model.features
-        self.target = config.model.target
+        self.targets = config.model.targets
+        self.prediction_horizon = config.processing.prediction_horizon
         self.min_train_years = config.model.min_train_years
         self.trade_date = trade_date if trade_date else find_last_trading_date()
         if not validate_trade_date(self.trade_date):
             raise ValueError(f"Invalid trade date: {self.trade_date}.")
 
-    def train(self, data: pl.DataFrame, retrain: bool = False):
+    def train(self, data: pl.DataFrame, retrain: bool = False) -> None:
         """
-        Train and optimize GA-XGBoost model.
+        Train GA-XGBoost models for stock selection.
 
         Parameters
         ----------
@@ -43,52 +44,66 @@ class ModelHandler:
             Whether to retrain the model for given trade date.
         """
         try:
-            logger.info(f"START training model - {self.trade_date}")
+            for target in self.targets:
+                logger.info(f"START training model for {target}, {self.trade_date}")
 
-            model_file = MODEL_DIR / f"{self.trade_date.date()}.pkl"
-            if model_file.exists() and not retrain:
-                logger.warning(f"Model already exists for {self.trade_date} - skipping training.")
-                return
+                trade_date_model_dir = MODEL_DIR / f"{self.trade_date.date()}"
+                trade_date_model_dir.mkdir(parents=True, exist_ok=True)
+                model_file = trade_date_model_dir / f"{target}.pkl"
+                if model_file.exists() and not retrain:
+                    logger.warning(f"Model already exists for {target}, {self.trade_date}")
+                    continue
 
-            train = data.filter(
-                (pl.col("tdq") < self.trade_date)
-                & ~pl.all_horizontal(pl.col(self.target).is_null())
-            )
+                train = data.filter(
+                    (pl.col("tdq") < self.trade_date - dt.timedelta(days=360))
+                    & ~pl.all_horizontal(pl.col(target).is_null())
+                ).select(["tdq", "tic"] + self.features + [target])
 
-            id_cols = ["tdq", "tic"]
-            training_fields = id_cols + self.features + [self.target]
-            train = train.select(training_fields)
-            scale = self.get_dataset_imbalance_scale(train)
+                scale = self.get_dataset_imbalance_scale(train, target)
+                params = self.optimize(train, target, scale)
+                params = format_ga_parameters(params, scale)
 
-            # run GA optimization
-            ga = GeneticAlgorithm(
-                ga_settings=config.model.ga,
-                fitness_func=fitness_function_wrapper(
-                    train, self.features, self.target, self.min_train_years, scale
-                ),
-            )
+                X_train = train.select(self.features).to_pandas()
+                y_train = train.select(target).to_pandas().values.ravel()
 
-            # run XGB-GA optimization
-            ga.create_instance()
-            ga.train()
-            best_solution, best_solution_fitness, best_solution_idx = ga.best_solution()
+                model = XGBoostClassifier(params)
+                model.train(X_train, y_train)
+                model.save_model(model_file)
 
-            # train final model with best params
-            params = format_ga_parameters(best_solution, scale)
-
-            X_train = train.select(self.features).to_pandas()
-            y_train = train.select(self.target).to_pandas().values.ravel()
-
-            model = XGBoostModel(params)
-            model.train(X_train, y_train)
-            model.save_model(model_file)
+                logger.success(f"END training model for {target}, {self.trade_date}")
+            return
         except Exception as e:
             logger.error(f"ERROR: failed to train model - {e}")
             raise
 
-    def score(self, data: pl.DataFrame, stocks: list[str]):
+    def optimize(self, train: pl.DataFrame, target: str, scale: float) -> None:
         """
-        Classify using sector-specific models.
+        Optimize model parameters.
+
+        Parameters
+        ----------
+        train : pl.DataFrame
+            Preprocessed financial data.
+        target : str
+            Target variable to optimize model for.
+        scale : float
+            Class imbalance scale.
+        """
+
+        ga = GeneticAlgorithm(
+            ga_settings=config.model.ga,
+            fitness_func=fitness_function_wrapper(
+                train, self.features, target, scale, self.min_train_years
+            ),
+        )
+        ga.create_instance()
+        ga.train()
+        best_solution, best_solution_fitness, best_solution_idx = ga.best_solution()
+        return best_solution
+
+    def score(self, data: pl.DataFrame, stocks: list[str]) -> None:
+        """
+        Score stocks using all target-specific models and save average ranks.
 
         Parameters
         ----------
@@ -96,49 +111,57 @@ class ModelHandler:
             Preprocessed financial data.
         stocks : list[str]
             List of stocks to score.
+
+        Returns
+        -------
+        pl.DataFrame
+            Dataframe with stock ranks.
         """
         try:
             logger.info(f"START stocksense eval - {self.trade_date}")
 
-            model_file = MODEL_DIR / f"{self.trade_date.date()}.pkl"
-            if not model_file.exists():
-                raise FileNotFoundError(f"No model found for trade date {self.trade_date}")
+            final_ranks = data.filter(
+                (pl.col("tdq") == self.trade_date) & pl.col("tic").is_in(stocks)
+            )
 
-            test = data.filter((pl.col("tdq") == self.trade_date) & pl.col("tic").is_in(stocks))
-            test_df = test.select(self.features).to_pandas()
+            pred_cols = []
+            for target in self.targets:
+                trade_date_model_dir = MODEL_DIR / f"{self.trade_date.date()}"
+                model_file = trade_date_model_dir / f"{target}.pkl"
+                if not model_file.exists():
+                    raise FileNotFoundError(f"No model found for trade date {self.trade_date}")
 
-            model = XGBoostModel()
-            model.load_model(model_file)
-            prob_scores = model.predict_proba(test_df)
-            test = test.with_columns(pl.Series("score", prob_scores))
-            self.save_scoring_report(test)
-            return
+                test_df = (
+                    data.filter((pl.col("tdq") == self.trade_date) & pl.col("tic").is_in(stocks))
+                    .select(self.features)
+                    .to_pandas()
+                )
+
+                model = XGBoostClassifier()
+                model.load_model(model_file)
+                logger.info(f"loaded model from {model_file}, with params: {model.params}")
+
+                prob_scores = model.predict_proba(test_df)
+                final_ranks = final_ranks.with_columns(pl.Series(f"pred_{target}", prob_scores))
+                pred_cols.append(f"pred_{target}")
+
+            # Calculate average rank
+            final_ranks = (
+                final_ranks.with_columns(pl.mean_horizontal(pred_cols).alias("avg_score"))
+                .sort("avg_score", descending=True)
+                .with_columns(pl.col("avg_score").round(4).alias("avg_score"))
+            )
+
+            self.save_scoring_report(
+                final_ranks.select(["tic", "adj_close", "fwd_return_4Q", "avg_score"] + pred_cols)
+            )
+
+            return final_ranks
         except Exception as e:
             logger.error(f"ERROR: failed to score stocks - {e}")
             raise
 
-    def save_scoring_report(self, test_data: pl.DataFrame):
-        """
-        Save scoring report csv.
-
-        Parameters
-        ----------
-        test_data : pl.DataFrame
-            Test data with scores.
-        """
-        try:
-            logger.info("START saving scoring report")
-            report = test_data.select(
-                ["tic", "close", "score", "freturn", "adj_freturn", "fperf"]
-            ).sort("score", descending=True)
-            report_file = REPORT_DIR / f"report_{self.trade_date.date()}.csv"
-            report.write_csv(report_file)
-            logger.success(f"END saved scoring report to {report_file}")
-        except Exception as e:
-            logger.error(f"ERROR failed to save scoring report - {e}")
-            raise
-
-    def get_dataset_imbalance_scale(self, train: pl.DataFrame):
+    def get_dataset_imbalance_scale(self, train: pl.DataFrame, target: str) -> float:
         """
         Compute dataset class imbalance scale.
 
@@ -146,6 +169,8 @@ class ModelHandler:
         ----------
         train : pl.DataFrame
             Training dataset.
+        target : str
+            Target variable to compute class imbalance scale for.
 
         Returns
         -------
@@ -154,9 +179,26 @@ class ModelHandler:
         """
         min_year = pl.col("tdq").dt.year().min()
         filtered_data = train.filter(pl.col("tdq").dt.year() < min_year + self.min_train_years)
-        neg_count = len(filtered_data.filter(pl.col(self.target) == 0))
-        pos_count = len(filtered_data.filter(pl.col(self.target) == 1))
+        neg_count = len(filtered_data.filter(pl.col(target) == 0))
+        pos_count = len(filtered_data.filter(pl.col(target) == 1))
         return round(neg_count / pos_count, 2)
+
+    def save_scoring_report(self, rank_data: pl.DataFrame) -> None:
+        """
+        Save scoring report csv with ranks for each target and average rank.
+
+        Parameters
+        ----------
+        rank_data : pl.DataFrame
+            DataFrame containing ranks for each target and average rank.
+        """
+        try:
+            report_file = REPORT_DIR / f"scores_{self.trade_date.date()}.csv"
+            rank_data.write_csv(report_file)
+            logger.success(f"SAVED scoring report to {report_file}")
+        except Exception as e:
+            logger.error(f"ERROR failed to save scoring report - {e}")
+            raise
 
 
 def validate_trade_date(date: dt.datetime) -> bool:
@@ -178,7 +220,7 @@ def validate_trade_date(date: dt.datetime) -> bool:
     return date.month in allowed_months and date.day == 1
 
 
-def find_last_trading_date():
+def find_last_trading_date() -> Optional[dt.datetime]:
     """
     Find last trading date, which will be used for stock selection.
 
@@ -205,7 +247,7 @@ def find_last_trading_date():
         return None
 
 
-def format_ga_parameters(ga_solution: List[float], scale: float):
+def format_ga_parameters(ga_solution: List[float], scale: float) -> dict:
     """
     Format model parameters.
 
@@ -216,12 +258,11 @@ def format_ga_parameters(ga_solution: List[float], scale: float):
     scale : float
         Class imbalance scale.
     """
-    # train final model with best params
     return {
         "objective": "binary:logistic",
         "learning_rate": ga_solution[0],
-        "n_estimators": int(ga_solution[1]),
-        "max_depth": int(ga_solution[2]),
+        "n_estimators": round(ga_solution[1]),
+        "max_depth": round(ga_solution[2]),
         "min_child_weight": ga_solution[3],
         "gamma": ga_solution[4],
         "subsample": ga_solution[5],
@@ -230,6 +271,7 @@ def format_ga_parameters(ga_solution: List[float], scale: float):
         "reg_lambda": ga_solution[8],
         "scale_pos_weight": scale,
         "eval_metric": "logloss",
+        "tree_method": "hist",
         "nthread": -1,
-        "seed": 100,
+        "random_state": 100,
     }
