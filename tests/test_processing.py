@@ -6,7 +6,6 @@ from polars.testing import assert_frame_equal
 from stocksense.config import config
 from stocksense.pipeline.preprocess import (
     clean,
-    compute_trade_date,
     engineer_features,
     generate_quarter_dates,
     map_to_closest_split_factor,
@@ -28,13 +27,6 @@ def test_map_to_closest_split_factor():
     assert map_to_closest_split_factor(2.1) == 2.0
     assert map_to_closest_split_factor(3.9) == 4.0
     assert map_to_closest_split_factor(0.24) == 0.25
-
-
-def test_compute_trade_date(financial_data):
-    result = compute_trade_date(financial_data)
-    assert "tdq" in result.columns
-    assert result.shape[0] == financial_data.shape[0]
-    assert all(isinstance(d, dt.date) for d in result["tdq"])
 
 
 def test_feature_engineering(

@@ -8,7 +8,7 @@ from loguru import logger
 from tqdm import tqdm
 
 from stocksense.config import ConfigManager
-from stocksense.database_handler import DatabaseHandler
+from stocksense.database import DatabaseHandler
 
 from .scraper import Scraper
 

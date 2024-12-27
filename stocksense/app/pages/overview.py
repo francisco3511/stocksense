@@ -3,7 +3,7 @@ import pandas as pd
 import plotly.express as px
 import streamlit as st
 
-from stocksense.database_handler import DatabaseHandler
+from stocksense.database import DatabaseHandler
 
 pd.set_option("future.no_silent_downcasting", True)
 

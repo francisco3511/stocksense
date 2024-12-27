@@ -172,6 +172,7 @@ log/
 .ruff_cache/
 
 # model files
+**/model_base/*
 *.pkl
 
 # reports

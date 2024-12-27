@@ -5,7 +5,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 
-This project implements an intelligent dynamic stock selection system using an **Adaptive Genetic Algorithm-optimized XGBoost** (GA-XGBoost) classifier to identify stocks with potential market outperformance. The model analyzes quarterly financial statements, market data, insider trading patterns and other external data to rank and select stocks that will outperform the S&P 500 index over a one-year horizon. The project includes a **Streamlit-based analytics dashboard** that provides comprehensive stock analysis tools, including technical indicators, financial metrics visualization, and model-driven insights.
+This project implements an intelligent dynamic stock selection system using **Adaptive Genetic Algorithm-optimized XGBoost** (GA-XGBoost) ensemble models to identify stocks with potential market outperformance in the medium to long term. The model analyzes quarterly financial statements, market data, insider trading patterns and other external data to rank and select stocks that will outperform the S&P 500 index over a one-year horizon. The project includes a **Streamlit-based analytics dashboard** that provides comprehensive stock analysis tools, including technical indicators, financial metrics visualization, and model-driven insights.
 
 
 ## Table of Contents
@@ -28,7 +28,7 @@ This project implements an intelligent stock selection system that identifies po
 The core engine combines three key components:
 
 1. **Data Pipeline**
-   - Automated collection of S&P 500 constituent data
+   - Automated collection of S&P500 constituent data
    - Integration of multiple data sources:
      - Quarterly financial statements and earnings reports
      - Daily market data and technical indicators

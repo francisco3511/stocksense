@@ -5,7 +5,7 @@ import pandas as pd
 import plotly.express as px
 import streamlit as st
 
-from stocksense.database_handler import DatabaseHandler
+from stocksense.database import DatabaseHandler
 
 REPORTS_DIR = Path(__file__).parents[3] / "reports"
 SCORES_DIR = REPORTS_DIR / "scores"

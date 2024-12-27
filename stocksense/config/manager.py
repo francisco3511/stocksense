@@ -1,4 +1,5 @@
 from datetime import datetime
+from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, List
 
@@ -9,6 +10,20 @@ from pydantic import (
     field_validator,
     model_validator,
 )
+
+
+class Sector(str, Enum):
+    HEALTH_CARE = "Health Care"
+    FINANCIALS = "Financials"
+    INDUSTRIALS = "Industrials"
+    CONSUMER_DISCRETIONARY = "Consumer Discretionary"
+    INFORMATION_TECHNOLOGY = "Information Technology"
+    COMMUNICATION_SERVICES = "Communication Services"
+    CONSUMER_STAPLES = "Consumer Staples"
+    UTILITIES = "Utilities"
+    REAL_ESTATE = "Real Estate"
+    MATERIALS = "Materials"
+    ENERGY = "Energy"
 
 
 class ScrapingConfig(BaseModel):
@@ -25,27 +40,28 @@ class ScrapingConfig(BaseModel):
 
 
 class ProcessingConfig(BaseModel):
-    trading_days_2week: int = Field(alias="two_week_trading_days")
-    trading_days_month: int = Field(alias="month_trading_days")
-    trading_days_quarter: int = Field(alias="quarter_trading_days")
-    trading_days_semester: int = Field(alias="semester_trading_days")
-    trading_days_year: int = Field(alias="year_trading_days")
-    trading_days_2year: int = Field(alias="two_year_trading_days")
+    trade_days_2week: int = Field(alias="two_week_trading_days")
+    trade_days_month: int = Field(alias="month_trading_days")
+    trade_days_quarter: int = Field(alias="quarter_trading_days")
+    trade_days_semester: int = Field(alias="semester_trading_days")
+    trade_days_third_quarter: int = Field(alias="third_quarter_trading_days")
+    trade_days_year: int = Field(alias="year_trading_days")
+    trade_days_2year: int = Field(alias="two_year_trading_days")
     prediction_horizon: int = Field(gt=0)
     over_performance_threshold: float = Field(lt=1.0, description="Overperformance threshold")
     performance_threshold: float = Field(gt=0.0, lt=1.0, description="Performance threshold")
-    sectors: List[str] = Field(min_length=11, max_length=11)
+    sectors: List[Sector] = Field(min_length=11, max_length=11)
 
     @model_validator(mode="after")
     def validate_trading_days_order(self) -> "ProcessingConfig":
         """Validate that trading days are in ascending order."""
         if not (
-            self.trading_days_2week
-            < self.trading_days_month
-            < self.trading_days_quarter
-            < self.trading_days_semester
-            < self.trading_days_year
-            < self.trading_days_2year
+            self.trade_days_2week
+            < self.trade_days_month
+            < self.trade_days_quarter
+            < self.trade_days_semester
+            < self.trade_days_year
+            < self.trade_days_2year
         ):
             raise ValueError("Trading days must be in ascending order")
         return self
@@ -54,12 +70,12 @@ class ProcessingConfig(BaseModel):
     def trading_days(self) -> Dict[str, int]:
         """Get all trading day periods in a dictionary."""
         return {
-            "2week": self.trading_days_2week,
-            "month": self.trading_days_month,
-            "quarter": self.trading_days_quarter,
-            "semester": self.trading_days_semester,
-            "year": self.trading_days_year,
-            "2year": self.trading_days_2year,
+            "2week": self.trade_days_2week,
+            "month": self.trade_days_month,
+            "quarter": self.trade_days_quarter,
+            "semester": self.trade_days_semester,
+            "year": self.trade_days_year,
+            "2year": self.trade_days_2year,
         }
 
     @property
@@ -70,19 +86,27 @@ class ProcessingConfig(BaseModel):
             "performance": self.performance_threshold,
         }
 
+    @model_validator(mode="after")
+    def validate_sectors_completeness(self) -> "ProcessingConfig":
+        """Validate that all sectors are present."""
+        if set(self.sectors) != set(Sector):
+            missing = set(Sector) - set(self.sectors)
+            raise ValueError(f"Missing sectors: {missing}")
+        return self
+
 
 class ModelConfig(BaseModel):
     features: List[str]
-    target: str
+    targets: List[str]
     id_col: str
     date_col: str
-    min_train_years: int = Field(ge=10, le=20)
+    min_train_years: int = Field(ge=5, le=50)
     ga: Dict[str, Any]
 
     @model_validator(mode="after")
     def validate_column_names(self) -> "ModelConfig":
         """Validate that target, id_col and date_col are not in features."""
-        special_cols = [self.target, self.id_col, self.date_col]
+        special_cols = [self.targets] + [self.id_col, self.date_col]
         if any(col in self.features for col in special_cols):
             raise ValueError("features list cannot contain target, id_col or date_col")
         return self

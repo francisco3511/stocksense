@@ -27,8 +27,9 @@ class BaseXGBoostModel:
             "colsample_bytree": 1,
             "reg_alpha": 0,
             "reg_lambda": 1,
-            "nthread": 2,
-            "seed": 100,
+            "tree_method": "hist",
+            "nthread": -1,
+            "random_state": 100,
         }
 
     def save_model(self, model_path: Path) -> None:
@@ -53,13 +54,7 @@ class XGBoostClassifier(BaseXGBoostModel):
 
     def _default_params(self):
         params = super()._default_params()
-        params.update(
-            {
-                "objective": "binary:logistic",
-                "scale_pos_weight": 1.0,
-                "eval_metric": "logloss",
-            }
-        )
+        params.update({"objective": "binary:logistic", "eval_metric": "logloss", "nthread": -1})
         return params
 
     def train(self, X_train: np.ndarray, y_train: np.ndarray) -> None:
@@ -100,17 +95,47 @@ class XGBoostRegressor(BaseXGBoostModel):
         params = super()._default_params()
         params.update(
             {
-                "objective": "reg:squarederror",
-                "eval_metric": "rmse",
-                "nthread": 2,
-                "seed": 100,
+                "objective": "reg:absoluteerror",
+                "eval_metric": "mae",
+                "tree_method": "hist",
+                "nthread": -1,
+                "random_state": 100,
             }
         )
         return params
 
-    def train(self, X_train: np.ndarray, y_train: np.ndarray) -> None:
+    def train(
+        self,
+        X_train: np.ndarray,
+        y_train: np.ndarray,
+    ) -> None:
+        """
+        Train the model.
+
+        Parameters
+        ----------
+        X_train : np.ndarray
+            Training features
+        y_train : np.ndarray
+            Training targets
+        """
+
         self.model = xgb.XGBRegressor(**self.params)
-        self.model.fit(X_train, y_train, verbose=True)
+        self.model.fit(X_train, y_train, verbose=False)
+
+    @property
+    def best_iteration(self) -> Optional[int]:
+        """Get the number of boosting rounds chosen by early stopping."""
+        if self.model is None:
+            raise Exception("Model is not trained yet.")
+        return getattr(self.model, "best_iteration", None)
+
+    @property
+    def best_score(self) -> Optional[float]:
+        """Get the best validation score."""
+        if self.model is None:
+            raise Exception("Model is not trained yet.")
+        return getattr(self.model, "best_score", None)
 
     def predict(self, X: np.ndarray) -> np.ndarray:
         if self.model is None:

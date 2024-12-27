@@ -6,7 +6,7 @@ import polars as pl
 
 from stocksense import __version__
 from stocksense.config import config
-from stocksense.database_handler import DatabaseHandler
+from stocksense.database import DatabaseHandler
 from stocksense.model import ModelHandler, PortfolioBuilder
 from stocksense.pipeline import ETL, clean, engineer_features
 
@@ -36,17 +36,10 @@ def cli():
 
 
 @cli.command()
-@click.option(
-    "-c", "--config-path", type=click.Path(exists=True), help="Path to custom configuration file"
-)
 def update():
-    """
-    Update stock database with latest market data.
-    """
-    click.echo("Updating stock database...")
+    """Update stock database with latest market data."""
     etl_handler = ETL(config)
     etl_handler.extract()
-    click.echo("Database update complete.")
 
 
 @cli.command()
@@ -61,11 +54,9 @@ def update():
 @click.option("-f", "--force", is_flag=True, help="Force model retraining even if model exists.")
 def train(trade_date: datetime, force: bool):
     """Train the prediction model for a specific trade date."""
-    click.echo(f"Training model for trade date: {trade_date.date()}")
     data = prepare_data()
     handler = ModelHandler(trade_date)
     handler.train(data, force)
-    click.echo("Model training complete!")
 
 
 @cli.command()
@@ -84,20 +75,24 @@ def train(trade_date: datetime, force: bool):
     default="market_cap",
     help="Portfolio weighting strategy.",
 )
-def portfolio(trade_date: datetime, weighting: str):
+@click.option(
+    "-n",
+    "--n-stocks",
+    type=int,
+    default=30,
+    help="Number of stocks to include in the portfolio.",
+)
+def portfolio(trade_date: datetime, weighting: str, n_stocks: int):
     """Build investment portfolio for a specific trade date."""
-    click.echo(f"Building portfolio for trade date: {trade_date.date()}")
 
     data = prepare_data()
     constituents = DatabaseHandler().fetch_constituents(trade_date)
 
     handler = ModelHandler(trade_date)
-    handler.score(data, constituents)
+    ranks = handler.score(data, constituents)
 
-    portfolio = PortfolioBuilder(weighting=weighting)
-    portfolio.build_portfolio(trade_date)
-
-    click.echo("Portfolio construction complete!")
+    portfolio = PortfolioBuilder(weighting)
+    portfolio.build_portfolio(n_stocks, trade_date, ranks)
 
 
 def main():

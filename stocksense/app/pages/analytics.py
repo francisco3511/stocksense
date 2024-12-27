@@ -4,7 +4,7 @@ import plotly.graph_objects as go
 import streamlit as st
 from plotly.subplots import make_subplots
 
-from stocksense.database_handler import DatabaseHandler
+from stocksense.database import DatabaseHandler
 from stocksense.pipeline import clean, engineer_features
 
 pd.options.mode.chained_assignment = None  # default='warn'
