@@ -46,7 +46,6 @@ class ModelHandler:
         try:
             for target in self.targets:
                 logger.info(f"START training model for {target}, {self.trade_date}")
-
                 trade_date_model_dir = MODEL_DIR / f"{self.trade_date.date()}"
                 trade_date_model_dir.mkdir(parents=True, exist_ok=True)
                 model_file = trade_date_model_dir / f"{target}.pkl"
@@ -60,6 +59,8 @@ class ModelHandler:
                 ).select(["tdq", "tic"] + self.features + [target])
 
                 scale = self.get_dataset_imbalance_scale(train, target)
+                logger.info(f"Class balance scale: {scale}")
+
                 params = self.optimize(train, target, scale)
                 params = format_ga_parameters(params, scale)
 
@@ -69,7 +70,6 @@ class ModelHandler:
                 model = XGBoostClassifier(params)
                 model.train(X_train, y_train)
                 model.save_model(model_file)
-
                 logger.success(f"END training model for {target}, {self.trade_date}")
             return
         except Exception as e:
@@ -89,7 +89,6 @@ class ModelHandler:
         scale : float
             Class imbalance scale.
         """
-
         ga = GeneticAlgorithm(
             ga_settings=config.model.ga,
             fitness_func=fitness_function_wrapper(
@@ -119,11 +118,8 @@ class ModelHandler:
         """
         try:
             logger.info(f"START stocksense eval - {self.trade_date}")
-
-            final_ranks = data.filter(
-                (pl.col("tdq") == self.trade_date) & pl.col("tic").is_in(stocks)
-            )
-
+            test = data.filter((pl.col("tdq") == self.trade_date) & pl.col("tic").is_in(stocks))
+            final_ranks = test.clone()
             pred_cols = []
             for target in self.targets:
                 trade_date_model_dir = MODEL_DIR / f"{self.trade_date.date()}"
@@ -131,16 +127,11 @@ class ModelHandler:
                 if not model_file.exists():
                     raise FileNotFoundError(f"No model found for trade date {self.trade_date}")
 
-                test_df = (
-                    data.filter((pl.col("tdq") == self.trade_date) & pl.col("tic").is_in(stocks))
-                    .select(self.features)
-                    .to_pandas()
-                )
-
                 model = XGBoostClassifier()
                 model.load_model(model_file)
                 logger.info(f"loaded model from {model_file}, with params: {model.params}")
 
+                test_df = test.select(self.features).to_pandas()
                 prob_scores = model.predict_proba(test_df)
                 final_ranks = final_ranks.with_columns(pl.Series(f"pred_{target}", prob_scores))
                 pred_cols.append(f"pred_{target}")
@@ -181,7 +172,7 @@ class ModelHandler:
         filtered_data = train.filter(pl.col("tdq").dt.year() < min_year + self.min_train_years)
         neg_count = len(filtered_data.filter(pl.col(target) == 0))
         pos_count = len(filtered_data.filter(pl.col(target) == 1))
-        return round(neg_count / pos_count, 2)
+        return max(1.0, round(neg_count / pos_count, 2))
 
     def save_scoring_report(self, rank_data: pl.DataFrame) -> None:
         """
@@ -261,14 +252,14 @@ def format_ga_parameters(ga_solution: List[float], scale: float) -> dict:
     return {
         "objective": "binary:logistic",
         "learning_rate": ga_solution[0],
-        "n_estimators": round(ga_solution[1]),
-        "max_depth": round(ga_solution[2]),
-        "min_child_weight": ga_solution[3],
-        "gamma": ga_solution[4],
-        "subsample": ga_solution[5],
-        "colsample_bytree": ga_solution[6],
-        "reg_alpha": ga_solution[7],
-        "reg_lambda": ga_solution[8],
+        "n_estimators": 100,
+        "max_depth": round(ga_solution[1]),
+        "min_child_weight": ga_solution[2],
+        "gamma": ga_solution[3],
+        "subsample": ga_solution[4],
+        "colsample_bytree": ga_solution[5],
+        "reg_alpha": ga_solution[6],
+        "reg_lambda": ga_solution[7],
         "scale_pos_weight": scale,
         "eval_metric": "logloss",
         "tree_method": "hist",

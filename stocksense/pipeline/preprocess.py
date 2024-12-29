@@ -1070,7 +1070,7 @@ def compute_performance_targets(df: pl.DataFrame) -> pl.DataFrame:
 
     fwd_return_horizons = ["1Q", "2Q", "3Q", "4Q"]
     vol_horizons = ["qoq", "qoq", "sos", "yoy"]
-    excess_margins = [6.0, 12.0, 25.0, 30.0]
+    excess_margins = [6.0, 12.0, 20.0, 30.0]
 
     for i, horizon in enumerate(fwd_return_horizons):
         df = df.with_columns(

@@ -54,17 +54,18 @@ class PortfolioBuilder:
         """
         try:
             stock_info = self.db.fetch_stock()
+            data = data.sort("avg_score", descending=True)
             scored_stocks = data.join(
                 stock_info.select(["tic", "name", "sector"]), on="tic", how="left"
             )
 
             # Apply filters to get qualified stocks
-            portfolio = self._filter_candidates(scored_stocks).head(n_stocks)
+            portfolio = self._filter_candidates(scored_stocks).head(50)
 
             if self.weighting == "equal":
                 weights = self._equal_weight(portfolio)
             elif self.weighting == "market_cap":
-                weights = self._market_cap_weight(portfolio, score_weight=0.35)
+                weights = self._market_cap_weight(portfolio, score_weight=0.4)
             elif self.weighting == "sector_neutral":
                 weights = self._sector_neutral_weight(portfolio, trade_date)
             else:
@@ -79,8 +80,9 @@ class PortfolioBuilder:
                 portfolio = portfolio.select(portfolio_cols + ["fwd_return_4Q"])
 
             logger.info(f"Built {self.weighting}-weighted portfolio with {n_stocks} stocks")
+            portfolio = portfolio.sort("weight", descending=True).head(n_stocks)
             self._save_portfolio_excel(portfolio, trade_date)
-            return portfolio.sort("weight", descending=True)
+            return portfolio
 
         except Exception as e:
             logger.error(f"Failed to build portfolio: {e}")
@@ -96,11 +98,13 @@ class PortfolioBuilder:
             Filtered portfolio.
         """
 
+        score_threshold = df["avg_score"].mean() + df["avg_score"].std()
         quality_filters = (
             (pl.col("pe") > 0)
             & (pl.col("saleq_yoy") > -20)
             & (pl.col("fcf_yoy") > -50)
             & (pl.col("price_mom") > -25)
+            & (pl.col("avg_score") > score_threshold)
         )
         return df.filter(quality_filters)
 
@@ -216,7 +220,7 @@ class PortfolioBuilder:
             sector_alloc.to_excel(writer, sheet_name="Sector Allocations", index=False)
 
             # Sheet 3: Top Holdings
-            top_positions = portfolio.sort("weight", descending=True).head(10).to_pandas()
+            top_positions = portfolio.sort("weight", descending=True).head(5).to_pandas()
             top_positions["weight"] = top_positions["weight"].map("{:.2%}".format)
             top_positions.to_excel(writer, sheet_name="Top Holdings", index=False)
 

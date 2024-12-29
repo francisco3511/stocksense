@@ -79,7 +79,7 @@ def train(trade_date: datetime, force: bool):
     "-n",
     "--n-stocks",
     type=int,
-    default=30,
+    default=20,
     help="Number of stocks to include in the portfolio.",
 )
 def portfolio(trade_date: datetime, weighting: str, n_stocks: int):
