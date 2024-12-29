@@ -65,7 +65,7 @@ class PortfolioBuilder:
             if self.weighting == "equal":
                 weights = self._equal_weight(portfolio)
             elif self.weighting == "market_cap":
-                weights = self._market_cap_weight(portfolio, score_weight=0.4)
+                weights = self._market_cap_weight(portfolio, score_weight=0.5)
             elif self.weighting == "sector_neutral":
                 weights = self._sector_neutral_weight(portfolio, trade_date)
             else:

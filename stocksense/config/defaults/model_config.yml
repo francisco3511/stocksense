@@ -116,14 +116,14 @@
     - 'fwd_return_4Q_hit'
 'id_col': 'tic'
 'date_col': 'tdq'
-'min_train_years': 12
+'min_train_years': 10
 'max_splits': 3
 'ga':
     'num_generations': 75
     'num_parents_mating': 12
     'sol_per_pop': 60
     'num_genes': 8
-    'mutation_percent_genes': 20
+    'mutation_percent_genes': 15
     'crossover_probability': 0.8
     'parent_selection_type': "tournament"
     'keep_parents': 8

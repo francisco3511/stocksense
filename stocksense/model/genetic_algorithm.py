@@ -118,49 +118,6 @@ class GeneticAlgorithm:
         self.ga_instance.plot_fitness()
 
 
-def evaluate_top_hit_rate_by_date(
-    y_true: np.array, y_pred: np.array, trade_dates: np.array, k: int = 75
-) -> float:
-    """
-    Evaluate predictions by selecting top k stocks for each trade date.
-
-    Parameters:
-    -----------
-    y_true : np.array
-        Actual returns
-    y_pred : np.array
-        Predicted returns
-    trade_dates : np.array
-        Array of trade dates for each observation
-    k : int
-        Number of stocks to select per trade date
-
-    Returns
-    -------
-    float
-        Average top hit rate.
-    """
-    unique_dates = np.unique(trade_dates)
-    performance_by_date = []
-
-    for date in unique_dates:
-        date_mask = trade_dates == date
-        date_true = y_true[date_mask]
-        date_pred = y_pred[date_mask]
-
-        top_k_indices = np.argsort(date_pred)[-k:]
-        top_hit_rate = np.mean(date_true[top_k_indices] > 0)
-        performance_by_date.append(
-            {
-                "date": date,
-                "top_hit_rate": top_hit_rate,
-            }
-        )
-
-    avg_top_hit = np.mean([p["top_hit_rate"] for p in performance_by_date])
-    return round(avg_top_hit, 4) if avg_top_hit > 0 else 0.0001
-
-
 def evaluate_top_hit_rate(y_true: np.array, y_pred: np.array, k: int = 25) -> float:
     """
     Evaluate across all predictions at once, selecting top k% overall.
@@ -248,7 +205,7 @@ def fitness_function_wrapper(
     Callable[[pygad.GA, list[float], int], float]
         Fitness function.
     """
-    splits = get_train_val_splits(data, min_train_years, 1, 2)
+    splits = get_train_val_splits(data, min_train_years, 1, 3)
 
     def fitness_function(ga_instance, solution, solution_idx) -> float:
         """
@@ -292,15 +249,16 @@ def fitness_function_wrapper(
         for train, val in splits:
             X_train = train.select(features).to_pandas()
             y_train = train.select(target).to_pandas().values.ravel()
-            X_val = val.select(features).to_pandas()
-            y_val = val.select(target).to_pandas().values.ravel()
             trade_dates = val.select("tdq").to_pandas().values.ravel()
-
             xgb.train(X_train, y_train)
-            y_pred = xgb.predict_proba(X_val)
 
-            performance = evaluate_top_hit_rate_by_date(y_val, y_pred, trade_dates, 50)
-            performance_list.append(performance)
+            for trade_date in np.unique(trade_dates):
+                val_trade_date = val.filter(pl.col("tdq") == trade_date)
+                X_val = val_trade_date.select(features).to_pandas()
+                y_val = val_trade_date.select(target).to_pandas().values.ravel()
+                y_pred = xgb.predict_proba(X_val)
+                performance = evaluate_top_hit_rate(y_val, y_pred, 10)
+                performance_list.append(performance)
 
         avg_performance = round(np.mean(performance_list), 4)
         return avg_performance
