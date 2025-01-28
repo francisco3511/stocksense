@@ -54,30 +54,29 @@ class PortfolioBuilder:
         """
         try:
             stock_info = self.db.fetch_stock()
-            data = data.sort("avg_score", descending=True)
+            data = data.sort("avg_rank")
             scored_stocks = data.join(
                 stock_info.select(["tic", "name", "sector"]), on="tic", how="left"
             )
 
-            # Apply filters to get qualified stocks
             portfolio = self._filter_candidates(scored_stocks).head(50)
 
             if self.weighting == "equal":
                 weights = self._equal_weight(portfolio)
             elif self.weighting == "market_cap":
-                weights = self._market_cap_weight(portfolio, score_weight=0.5)
+                weights = self._market_cap_weight(portfolio, score_weight=0.3)
             elif self.weighting == "sector_neutral":
                 weights = self._sector_neutral_weight(portfolio, trade_date)
             else:
                 raise ValueError(f"Unknown weighting scheme: {self.weighting}")
 
             portfolio = portfolio.with_columns(pl.Series("weight", weights))
-            portfolio_cols = ["tic", "name", "sector", "adj_close", "avg_score", "weight"]
+            portfolio_cols = ["tic", "name", "sector", "adj_close", "mkt_cap", "avg_rank", "weight"]
 
             if trade_date > dt.datetime.now() - dt.timedelta(days=365):
                 portfolio = portfolio.select(portfolio_cols)
             else:
-                portfolio = portfolio.select(portfolio_cols + ["fwd_return_4Q"])
+                portfolio = portfolio.select(portfolio_cols + ["max_return_4Q", "fwd_return_4Q"])
 
             logger.info(f"Built {self.weighting}-weighted portfolio with {n_stocks} stocks")
             portfolio = portfolio.sort("weight", descending=True).head(n_stocks)
@@ -98,14 +97,7 @@ class PortfolioBuilder:
             Filtered portfolio.
         """
 
-        score_threshold = df["avg_score"].mean() + df["avg_score"].std()
-        quality_filters = (
-            (pl.col("pe") > 0)
-            & (pl.col("saleq_yoy") > -20)
-            & (pl.col("fcf_yoy") > -50)
-            & (pl.col("price_mom") > -25)
-            & (pl.col("avg_score") > score_threshold)
-        )
+        quality_filters = (pl.col("saleq_yoy") > -20) & (pl.col("price_mom") > -25)
         return df.filter(quality_filters)
 
     def _equal_weight(self, portfolio: pl.DataFrame) -> np.ndarray:
@@ -153,7 +145,7 @@ class PortfolioBuilder:
         weights = np.array([sector_weights[sector] for sector in portfolio["sector"]])
         return weights / weights.sum()
 
-    def _market_cap_weight(self, portfolio: pl.DataFrame, score_weight: float = 0.3) -> np.ndarray:
+    def _market_cap_weight(self, portfolio: pl.DataFrame, score_weight: float = 0.5) -> np.ndarray:
         """
         Hybrid market cap and score weighting scheme.
         Weights are calculated as a combination of market cap and model scores.
@@ -165,26 +157,26 @@ class PortfolioBuilder:
         score_weight : float
             Weight given to the model score (between 0 and 1)
             0 = pure market cap weighting
-            1 = pure score weighting
+            1 = pure rank weighting
 
         Returns
         -------
         np.ndarray
             Blended weights
         """
-
         # Calculate market cap component
         market_caps = portfolio["mkt_cap"].to_numpy()
         mkt_weights = market_caps / market_caps.sum()
 
-        # Calculate score component with exponential scaling
-        scores = portfolio["avg_score"].to_numpy()
-        norm_scores = (scores - scores.min()) / (scores.max() - scores.min())
-        score_component = norm_scores**2
-        score_component = score_component / score_component.sum()
+        # Calculate rank component
+        ranks = portfolio["avg_rank"].to_numpy()
+
+        # Convert ranks to weights
+        rank_weights = 1 / ranks
+        rank_weights = rank_weights / rank_weights.sum()
 
         # Blend the weights
-        final_weights = (1 - score_weight) * mkt_weights + score_weight * score_component
+        final_weights = (1 - score_weight) * mkt_weights + score_weight * rank_weights
         return final_weights / final_weights.sum()
 
     def _save_portfolio_excel(self, portfolio: pl.DataFrame, trade_date: dt.datetime) -> None:
@@ -203,9 +195,11 @@ class PortfolioBuilder:
             # Sheet 1: Full Portfolio
             portfolio_df = portfolio.sort("weight", descending=True).to_pandas()
             portfolio_df["weight"] = portfolio_df["weight"].map("{:.2%}".format)
-            portfolio_df["avg_score"] = portfolio_df["avg_score"].round(3)
+            portfolio_df["avg_rank"] = portfolio_df["avg_rank"].round(2)
+            portfolio_df["mkt_cap"] = portfolio_df["mkt_cap"].round(2)
             portfolio_df["adj_close"] = portfolio_df["adj_close"].round(1)
-            if "fwd_return_4Q" in portfolio_df.columns:
+            if "max_return_4Q" in portfolio_df.columns:
+                portfolio_df["max_return_4Q"] = portfolio_df["max_return_4Q"].round(2)
                 portfolio_df["fwd_return_4Q"] = portfolio_df["fwd_return_4Q"].round(2)
             portfolio_df.to_excel(writer, sheet_name="Full Portfolio", index=False)
 

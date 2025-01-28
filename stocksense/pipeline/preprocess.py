@@ -38,10 +38,16 @@ def engineer_features() -> pl.DataFrame:
         df = compute_sp500_features(df, index_data)
         df = compute_vix_features(df, vix_data)
         df = compute_market_features(df, market_df)
-        df = compute_industry_features(df, info)
         df = compute_growth_features(df)
         df = compute_piotroski_score(df)
+
+        # compute targets for model training
         df = compute_performance_targets(df)
+
+        # filter SP500 membership and compute cross-sectional features
+        df = filter_sp500_membership(df)
+        df = compute_industry_features(df, info)
+        df = compute_cross_sectional_features(df)
         df = compute_sector_dummies(df)
 
         logger.success(f"END {df.shape[0]} rows PROCESSED")
@@ -98,8 +104,8 @@ def clean(df: pl.DataFrame) -> pl.DataFrame:
         ]
     )
 
-    df = df.filter(~pl.all_horizontal(pl.col("roa_yoy").is_null()))
-    df = df.filter(~pl.all_horizontal(pl.col("price_2y").is_null()))
+    df = df.filter(~pl.all_horizontal(pl.col("roa").is_null()))
+    df = df.filter(~pl.all_horizontal(pl.col("price_yoy").is_null()))
     df = df.sort(["tic", "tdq"]).unique(subset=["tic", "tdq"], keep="last", maintain_order=True)
     df = df.sort(["tic", "tdq"])
 
@@ -242,7 +248,7 @@ def compute_insider_purchases(df: pl.DataFrame, insider_df: pl.DataFrame) -> pl.
         insider_filtered_lazy, how="inner", left_on=["tic"], right_on=["tic"]
     ).filter(
         (pl.col("filling_date") < pl.col("tdq"))
-        & (pl.col("filling_date") >= pl.col("tdq").dt.offset_by("-3mo"))
+        & (pl.col("filling_date") >= pl.col("tdq").dt.offset_by("-12mo"))
     )
     df_agg_lazy = df_filtered_lazy.group_by(["tic", "tdq"]).agg(
         [
@@ -259,7 +265,12 @@ def compute_insider_purchases(df: pl.DataFrame, insider_df: pl.DataFrame) -> pl.
             .alias("val_purch"),
         ]
     )
-    result = df_lazy.join(df_agg_lazy, on=["tic", "tdq"], how="left").fill_null(0)
+
+    # Join and only fill null values for the insider trading columns
+    result = df_lazy.join(
+        df_agg_lazy.select(["tic", "tdq", "n_purch", "val_purch"]), on=["tic", "tdq"], how="left"
+    ).with_columns([pl.col("n_purch").fill_null(0), pl.col("val_purch").fill_null(0)])
+
     return result.collect()
 
 
@@ -277,7 +288,7 @@ def compute_insider_sales(df: pl.DataFrame, insider_df: pl.DataFrame) -> pl.Data
         insider_filtered_lazy, how="inner", left_on=["tic"], right_on=["tic"]
     ).filter(
         (pl.col("filling_date") < pl.col("tdq"))
-        & (pl.col("filling_date") >= pl.col("tdq").dt.offset_by("-3mo"))
+        & (pl.col("filling_date") >= pl.col("tdq").dt.offset_by("-12mo"))
     )
 
     df_agg_lazy = df_filtered_lazy.group_by(["tic", "tdq"]).agg(
@@ -296,7 +307,9 @@ def compute_insider_sales(df: pl.DataFrame, insider_df: pl.DataFrame) -> pl.Data
         ]
     )
 
-    result = df_lazy.join(df_agg_lazy, on=["tic", "tdq"], how="left").fill_null(0)
+    result = df_lazy.join(
+        df_agg_lazy.select(["tic", "tdq", "n_sales", "val_sales"]), on=["tic", "tdq"], how="left"
+    ).with_columns([pl.col("n_sales").fill_null(0), pl.col("val_sales").fill_null(0)])
     return result.collect()
 
 
@@ -351,16 +364,11 @@ def compute_financial_features(df: pl.DataFrame) -> pl.DataFrame:
     """
     df = df.sort(by=["tic", "tdq"])
 
-    # Handle edge cases in net income
-    df = df.with_columns(
-        [
-            pl.when(pl.col("niq") == 0).then(pl.lit(None)).otherwise(pl.col("niq")).alias("niq"),
-            pl.when(pl.col("cogsq").is_null())
-            .then(pl.lit(0))
-            .otherwise(pl.col("cogsq"))
-            .alias("cogsq"),
-        ]
-    )
+    # Handle edge cases
+    for col in ["cogsq", "capxq"]:
+        df = df.with_columns(
+            pl.when(pl.col(col).is_null()).then(pl.lit(0)).otherwise(pl.col(col)).alias(col),
+        )
 
     df = df.lazy().with_columns(
         # Profitability ratios
@@ -383,16 +391,22 @@ def compute_financial_features(df: pl.DataFrame) -> pl.DataFrame:
         (pl.col("dlttq") / pl.col("atq") * 100).alias("ltda"),
         ((pl.col("oancfq") - pl.col("capxq")) / pl.col("dlttq") * 100).alias("ltcr"),
         # Efficiency ratios
-        (pl.col("saleq") / pl.col("invtq").rolling_mean(2)).over("tic").alias("itr"),
-        (pl.col("saleq") / pl.col("rectq").rolling_mean(2)).over("tic").alias("rtr"),
-        (pl.col("saleq") / pl.col("atq").rolling_mean(2)).over("tic").alias("atr"),
+        (pl.col("saleq") / pl.col("invtq").rolling_mean(2, min_periods=1)).over("tic").alias("itr"),
+        (pl.col("saleq") / pl.col("rectq").rolling_mean(2, min_periods=1)).over("tic").alias("rtr"),
+        (pl.col("saleq") / pl.col("atq").rolling_mean(2, min_periods=1)).over("tic").alias("atr"),
         pl.col("atq").log().alias("size"),
     )
 
     df = df.with_columns(
         # Earnings Stability
-        pl.col("niq").rolling_std(8).over("tic").alias("earnings_vol"),
-        pl.col("gpm").rolling_std(8).over("tic").alias("margin_vol"),
+        pl.col("niq").rolling_std(8, min_periods=4).over("tic").alias("earnings_vol"),
+        pl.col("gpm").rolling_std(8, min_periods=4).over("tic").alias("margin_vol"),
+    )
+
+    df = df.with_columns(
+        ((pl.col("tdq").cast(pl.Date) - pl.col("rdq").cast(pl.Date)) / pl.duration(days=1)).alias(
+            "days_since_earnings"
+        )
     )
 
     return df.collect()
@@ -424,20 +438,30 @@ def compute_sp500_features(df: pl.DataFrame, index_df: pl.DataFrame) -> pl.DataF
     index_df = index_df.with_columns(
         (pl.col("close") / pl.col("close").shift(1)).log().alias("log_return")
     ).with_columns(
-        (pl.col("log_return").rolling_std(config.processing.trade_days_month)).alias(
-            "index_vol_mom"
+        (
+            pl.col("log_return")
+            .rolling_std(config.processing.trade_days_month)
+            .alias("index_vol_mom")
         ),
-        (pl.col("log_return").rolling_std(config.processing.trade_days_quarter)).alias(
-            "index_vol_qoq"
+        (
+            pl.col("log_return")
+            .rolling_std(config.processing.trade_days_quarter)
+            .alias("index_vol_qoq")
         ),
-        (pl.col("log_return").rolling_std(config.processing.trade_days_semester)).alias(
-            "index_vol_sos"
+        (
+            pl.col("log_return")
+            .rolling_std(config.processing.trade_days_semester, min_periods=50)
+            .alias("index_vol_sos")
         ),
-        (pl.col("log_return").rolling_std(config.processing.trade_days_year)).alias(
-            "index_vol_yoy"
+        (
+            pl.col("log_return")
+            .rolling_std(config.processing.trade_days_year, min_periods=100)
+            .alias("index_vol_yoy")
         ),
-        (pl.col("log_return").rolling_std(config.processing.trade_days_2year)).alias(
-            "index_vol_2y"
+        (
+            pl.col("log_return")
+            .rolling_std(config.processing.trade_days_2year, min_periods=200)
+            .alias("index_vol_2y")
         ),
     )
 
@@ -456,9 +480,7 @@ def compute_sp500_features(df: pl.DataFrame, index_df: pl.DataFrame) -> pl.DataF
             "index_vol_sos",
             "index_vol_yoy",
             "index_vol_2y",
-            "avg_index_fwd_return_1Q",
             "avg_index_fwd_return_2Q",
-            "avg_index_fwd_return_3Q",
             "avg_index_fwd_return_4Q",
         ]
     )
@@ -475,39 +497,40 @@ def compute_sp500_features(df: pl.DataFrame, index_df: pl.DataFrame) -> pl.DataF
 
 def compute_sp500_forward_returns(index_df: pl.DataFrame) -> pl.DataFrame:
     """
-    Compute forward return features.
-    """
+    Compute forward return features for S&P 500 index using short averaging windows.
 
-    return_ranges = [
-        (config.processing.trade_days_month, "1M"),
-        (config.processing.trade_days_quarter, "1Q"),
-        (config.processing.trade_days_semester, "2Q"),
-        (config.processing.trade_days_third_quarter, "3Q"),
-        (config.processing.trade_days_year, "4Q"),
+    For each horizon (2Q, 4Q), computes the average return over a 10-day window
+    at the end of the period to reduce noise while maintaining signal clarity.
+
+    Parameters
+    ----------
+    index_df : pl.DataFrame
+        DataFrame with S&P 500 index data containing ['date', 'close']
+
+    Returns
+    -------
+    pl.DataFrame
+        DataFrame with S&P 500 forward return columns
+    """
+    # Define windows as (period_end, suffix, window_size)
+    return_windows = [
+        (config.processing.trade_days_semester, "2Q", 21),
+        (config.processing.trade_days_year, "4Q", 21),
     ]
 
     df = index_df.lazy()
-    df = df.with_columns(
-        [
-            *[
-                ((pl.col("close").shift(-i) / pl.col("close")) - 1).alias(f"fret_{i}")
-                for i in range(return_ranges[0][0], return_ranges[-1][0] + 1)
-            ],
-        ]
-    )
 
-    for i in range(len(return_ranges) - 1):
-        start = return_ranges[i][0]
-        end = return_ranges[i + 1][0]
+    for period_end, suffix, window_size in return_windows:
+        window_start = period_end - window_size + 1
+        window_returns = [
+            ((pl.col("close").shift(-i) / pl.col("close")) - 1)
+            for i in range(window_start, period_end + 1)
+        ]
+
         df = df.with_columns(
-            [
-                pl.mean_horizontal([f"fret_{i}" for i in range(start, end + 1)]).alias(
-                    f"avg_index_fwd_return_{return_ranges[i + 1][1]}"
-                ),
-            ]
+            pl.mean_horizontal(window_returns).alias(f"avg_index_fwd_return_{suffix}")
         )
 
-    df = df.drop([f"fret_{i}" for i in range(return_ranges[0][0], return_ranges[-1][0] + 1)])
     return df.collect()
 
 
@@ -606,41 +629,57 @@ def compute_market_features(df: pl.DataFrame, market_df: pl.DataFrame) -> pl.Dat
 
 def compute_forward_returns(df: pl.DataFrame) -> pl.DataFrame:
     """
-    Compute forward return features.
-    """
+    Compute forward returns using short averaging windows at the end of each period.
 
-    return_ranges = [
-        (config.processing.trade_days_month, "1M"),
-        (config.processing.trade_days_quarter, "1Q"),
-        (config.processing.trade_days_semester, "2Q"),
-        (config.processing.trade_days_third_quarter, "3Q"),
-        (config.processing.trade_days_year, "4Q"),
+    For each horizon (1Q, 2Q, 4Q), computes the average return over a 10-day window
+    at the end of the period to reduce noise while maintaining signal clarity.
+
+    Parameters
+    ----------
+    df : pl.DataFrame
+        DataFrame with columns ['tic', 'date', 'adj_close']
+
+    Returns
+    -------
+    pl.DataFrame
+        DataFrame with forward return columns for each horizon
+    """
+    # Define windows as (period_end, window_size)
+    return_windows = [
+        (config.processing.trade_days_semester, "2Q", 21),
+        (config.processing.trade_days_year, "4Q", 21),
     ]
 
     df = df.lazy().sort(["tic", "date"])
+
+    # For each target period, compute average return over the window
+    for period_end, suffix, window_size in return_windows:
+        # Calculate returns for each day in the window
+        window_start = period_end - window_size + 1
+        window_returns = [
+            ((pl.col("adj_close").shift(-i) / pl.col("adj_close")) - 1).over("tic")
+            for i in range(window_start, period_end + 1)
+        ]
+
+        # Average the returns in the window
+        df = df.with_columns(pl.mean_horizontal(window_returns).alias(f"fwd_return_{suffix}"))
+
     df = df.with_columns(
         [
-            *[
-                ((pl.col("adj_close").shift(-i) / pl.col("adj_close")) - 1)
-                .over("tic")
-                .alias(f"fret_{i}")
-                for i in range(return_ranges[0][0], return_ranges[-1][0] + 1)
-            ],
+            # Get maximum return achievable in next 252 days
+            (
+                pl.max_horizontal(
+                    [
+                        (pl.col("adj_close").shift(-i) / pl.col("adj_close")) - 1
+                        for i in range(21, config.processing.trade_days_year)
+                    ]
+                )
+            )
+            .over("tic")
+            .alias("max_return_4Q")
         ]
     )
 
-    for i in range(len(return_ranges) - 1):
-        start = return_ranges[i][0]
-        end = return_ranges[i + 1][0]
-        df = df.with_columns(
-            [
-                pl.mean_horizontal([f"fret_{i}" for i in range(start, end + 1)]).alias(
-                    f"fwd_return_{return_ranges[i + 1][1]}"
-                ),
-            ]
-        )
-
-    df = df.drop([f"fret_{i}" for i in range(return_ranges[0][0], return_ranges[-1][0] + 1)])
     return df.collect()
 
 
@@ -663,7 +702,10 @@ def compute_volume_features(df: pl.DataFrame) -> pl.DataFrame:
         [
             pl.col("volume").rolling_mean(20).over("tic").alias("volume_ma20_raw"),
             pl.col("volume").rolling_mean(50).over("tic").alias("volume_ma50_raw"),
-            pl.col("volume").rolling_mean(252).over("tic").alias("volume_annual_mean"),
+            pl.col("volume")
+            .rolling_mean(252, min_periods=200)
+            .over("tic")
+            .alias("volume_annual_mean"),
         ]
     )
 
@@ -694,6 +736,8 @@ def compute_volatility_features(df: pl.DataFrame) -> pl.DataFrame:
     df = df.with_columns(
         (pl.col("close") / pl.col("close").shift(1)).log().over("tic").alias("log_return")
     )
+
+    # Compute standard volatility features
     df = df.with_columns(
         # Volatility features
         pl.col("log_return")
@@ -705,15 +749,15 @@ def compute_volatility_features(df: pl.DataFrame) -> pl.DataFrame:
         .over("tic")
         .alias("vol_qoq"),
         pl.col("log_return")
-        .rolling_std(config.processing.trade_days_semester)
+        .rolling_std(config.processing.trade_days_semester, min_periods=50)
         .over("tic")
         .alias("vol_sos"),
         pl.col("log_return")
-        .rolling_std(config.processing.trade_days_year)
+        .rolling_std(config.processing.trade_days_year, min_periods=100)
         .over("tic")
         .alias("vol_yoy"),
         pl.col("log_return")
-        .rolling_std(config.processing.trade_days_2year)
+        .rolling_std(config.processing.trade_days_2year, min_periods=200)
         .over("tic")
         .alias("vol_2y"),
     )
@@ -722,6 +766,40 @@ def compute_volatility_features(df: pl.DataFrame) -> pl.DataFrame:
         (pl.col("vol_mom") > pl.col("vol_mom").rolling_mean(20).over("tic"))
         .cast(pl.Int8)
         .alias("high_volatility_regime")
+    )
+
+    df = df.with_columns(
+        pl.when(pl.col("log_return") < 0)
+        .then(pl.col("log_return") ** 2)
+        .otherwise(None)
+        .alias("squared_downside_return")
+    )
+
+    # Compute downside volatility by taking sqrt of mean of squared negative returns
+    df = df.with_columns(
+        [
+            (
+                pl.col("squared_downside_return")
+                .rolling_mean(config.processing.trade_days_quarter, min_periods=10)
+                .over("tic")
+                .sqrt()
+                .alias("downside_vol_qoq")
+            ),
+            (
+                pl.col("squared_downside_return")
+                .rolling_mean(config.processing.trade_days_year, min_periods=10)
+                .over("tic")
+                .sqrt()
+                .alias("downside_vol_yoy")
+            ),
+        ]
+    )
+
+    df = df.with_columns(
+        [
+            (pl.col("downside_vol_yoy") / pl.col("vol_yoy")).alias("downside_risk_ratio_yoy"),
+            (pl.col("downside_vol_qoq") / pl.col("vol_qoq")).alias("downside_risk_ratio_qoq"),
+        ]
     )
     return df
 
@@ -857,7 +935,6 @@ def compute_hybrid_features(df: pl.DataFrame) -> pl.DataFrame:
             (pl.col("mkt_cap") / (pl.col("atq") - pl.col("ltq"))).alias("pb"),
             (pl.col("mkt_cap") / pl.col("saleq").rolling_sum(4)).over("tic").alias("ps"),
             (pl.col("mkt_cap") / pl.col("ebitdaq").rolling_sum(4)).over("tic").alias("ev_ebitda"),
-            ((pl.col("mkt_cap") / pl.col("mkt_cap").sum().over("tdq")) * 100).alias("mkt_rel"),
         )
     )
 
@@ -873,6 +950,7 @@ def compute_industry_features(df: pl.DataFrame, info: pl.DataFrame) -> pl.DataFr
     """
     Add industry-relative metrics
     """
+    df = df.sort(by=["tic", "tdq"])
     df = df.join(info.select(["tic", "sector"]), on="tic", how="left")
     df = df.filter(pl.col("sector").is_in(config.processing.sectors))
 
@@ -967,12 +1045,11 @@ def compute_growth_features(df: pl.DataFrame) -> pl.DataFrame:
         "rtr": [year_lag],
         "atr": [year_lag],
         "size": [year_lag],
-        "roa_sec": [quarter_lag, year_lag],
     }
 
     expressions = []
 
-    # add standard growth calculations
+    # Add standard growth calculations
     df = df.sort(by=["tic", "tdq"])
     for metric, periods in metrics.items():
         for period in periods:
@@ -985,15 +1062,15 @@ def compute_growth_features(df: pl.DataFrame) -> pl.DataFrame:
 def compute_piotroski_score(df: pl.DataFrame) -> pl.DataFrame:
     """
     Compute Piotroski F-Score components (9 points total):
-    1. ROA > 0 (1 point)
-    2. Operating Cash Flow > 0 (1 point)
-    3. ROA increasing (1 point)
-    4. OCF > ROA (1 point)
-    5. Decrease in leverage (LTD) (1 point)
-    6. Increase in current ratio (1 point)
-    7. No new shares issued (1 point)
-    8. Increase in gross margin (1 point)
-    9. Increase in asset turnover (1 point)
+        1. ROA > 0 (1 point)
+        2. Operating Cash Flow > 0 (1 point)
+        3. ROA increasing (1 point)
+        4. OCF > ROA (1 point)
+        5. Decrease in leverage (LTD) (1 point)
+        6. Increase in current ratio (1 point)
+        7. No new shares issued (1 point)
+        8. Increase in gross margin (1 point)
+        9. Increase in asset turnover (1 point)
     """
     df = df.with_columns(
         [
@@ -1043,68 +1120,153 @@ def compute_piotroski_score(df: pl.DataFrame) -> pl.DataFrame:
     return df.drop(component_cols)
 
 
-def compute_performance_targets(df: pl.DataFrame) -> pl.DataFrame:
+def compute_cross_sectional_features(df: pl.DataFrame) -> pl.DataFrame:
     """
-    Compute target forward performance ratios.
-
-    Parameters
-    ----------
-    df : pl.DataFrame
-        Main dataset.
-
-    Returns
-    -------
-    pl.DataFrame
-        Dataset with each observation associated to forward returns and flags.
+    Add cross-sectional features, handling NaN values properly.
     """
+
     df = df.sort(["tic", "tdq"])
 
-    # Compute forward volatilities for adjusted returns
+    # Basic rankings
+    rank_metrics = ["pe", "ev_ebitda", "saleq_yoy", "roa", "fcf", "der", "price_mom", "price_yoy"]
+
+    for metric in rank_metrics:
+        df = df.with_columns(pl.col(metric).replace(float("inf"), float("nan")).alias(metric))
+        df = df.with_columns(
+            [
+                # Overall deciles
+                (
+                    pl.when(pl.col(metric).is_nan())
+                    .then(None)
+                    .otherwise(
+                        (
+                            (
+                                pl.col(metric).rank("ordinal").over("tdq").cast(pl.Float64)
+                                / pl.col(metric)
+                                .filter(~pl.col(metric).is_nan())
+                                .count()
+                                .over("tdq")
+                            )
+                            * 10
+                        ).ceil()
+                    )
+                ).alias(f"{metric}_mkt_rank"),
+                # Sector deciles
+                (
+                    pl.when(pl.col(metric).is_nan())
+                    .then(None)
+                    .otherwise(
+                        (
+                            (
+                                pl.col(metric)
+                                .rank("ordinal")
+                                .over(["tdq", "sector"])
+                                .cast(pl.Float64)
+                                / pl.col(metric)
+                                .filter(~pl.col(metric).is_nan())
+                                .count()
+                                .over(["tdq", "sector"])
+                            )
+                            * 10
+                        ).ceil()
+                    )
+                ).alias(f"{metric}_sec_rank"),
+            ]
+        )
+
+    return df
+
+
+def filter_sp500_membership(df: pl.DataFrame) -> pl.DataFrame:
+    """
+    Filter observations to approximate SP500 membership using relative market cap.
+    """
+    df = df.sort(["tic", "tdq"])
     df = df.with_columns(
         [
-            pl.col("vol_yoy").shift(-4).over("tic").clip(0.01, 0.1).alias("forward_vol_yoy"),
-            pl.col("vol_sos").shift(-2).over("tic").clip(0.01, 0.1).alias("forward_vol_sos"),
-            pl.col("vol_qoq").shift(-1).over("tic").clip(0.01, 0.1).alias("forward_vol_qoq"),
+            pl.col("mkt_cap").rank("ordinal", descending=True).over("tdq").alias("mkt_cap_rank"),
+        ]
+    )
+    df = df.filter((pl.col("mkt_cap_rank") <= 550))
+    return df
+
+
+def compute_performance_targets(df: pl.DataFrame) -> pl.DataFrame:
+    """
+    Compute target forward performance ratios with financial health.
+    """
+    df = df.sort(["tic", "tdq"])
+    df = df.with_columns(
+        [
+            # Forward volatility for risk adjustment
+            pl.col("vol_yoy").shift(-4).over("tic").alias("fwd_vol_yoy"),
+            pl.col("downside_vol_yoy").shift(-4).over("tic").alias("fwd_downside_vol_yoy"),
+            # Forward financial metrics (4Q ahead)
+            ((pl.col("saleq").shift(-4) / pl.col("saleq")).over("tic") - 1).alias(
+                "fwd_sales_growth"
+            ),
+            pl.col("roa").shift(-4).over("tic").alias("fwd_roa"),
+            pl.col("niq").shift(-4).over("tic").alias("fwd_niq"),
+            pl.col("fcf").shift(-4).over("tic").alias("fwd_fcf"),
+            pl.col("der").shift(-4).over("tic").alias("fwd_der"),
+            pl.col("f_score").shift(-4).over("tic").alias("fwd_f_score"),
         ]
     )
 
-    fwd_return_horizons = ["1Q", "2Q", "3Q", "4Q"]
-    vol_horizons = ["qoq", "qoq", "sos", "yoy"]
-    excess_margins = [6.0, 12.0, 20.0, 30.0]
+    df = df.with_columns(
+        # Risk-adjusted return
+        (pl.col("fwd_return_4Q") / pl.col("fwd_vol_yoy").mul(np.sqrt(252))).alias("risk_return_4Q"),
+        # Sortino ratio
+        (pl.col("fwd_return_4Q") / pl.col("fwd_downside_vol_yoy").mul(np.sqrt(252))).alias(
+            "sortino_4Q"
+        ),
+        # Excess return
+        ((pl.col("fwd_return_4Q") - pl.col("avg_index_fwd_return_4Q")) * 100).alias(
+            "excess_return_4Q"
+        ),
+        # Sharpe ratio
+        (
+            (pl.col("fwd_return_4Q") - pl.col("avg_index_fwd_return_4Q")) / pl.col("fwd_vol_yoy")
+        ).alias("sharpe_ratio_4Q"),
+    )
 
-    for i, horizon in enumerate(fwd_return_horizons):
-        df = df.with_columns(
-            (pl.col(f"fwd_return_{horizon}") - pl.col(f"avg_index_fwd_return_{horizon}")).alias(
-                f"excess_return_{horizon}"
-            )
-        )
-        df = df.with_columns(
-            (pl.col(f"excess_return_{horizon}") / pl.col(f"forward_vol_{vol_horizons[i]}"))
-            .clip(-100, 100)
-            .alias(f"sharpe_ratio_{horizon}")
-        )
-        df = df.with_columns(
-            (pl.col(f"fwd_return_{horizon}") / pl.col(f"forward_vol_{vol_horizons[i]}"))
-            .clip(-100, 100)
-            .alias(f"risk_return_{horizon}")
-        )
-        df = df.with_columns(
-            (pl.col(f"fwd_return_{horizon}") * 100).clip(-200, 200).alias(f"fwd_return_{horizon}"),
-            (pl.col(f"excess_return_{horizon}") * 100)
-            .clip(-100, 100)
-            .alias(f"excess_return_{horizon}"),
-        )
-        df = df.with_columns(
-            (pl.col(f"fwd_return_{horizon}") > excess_margins[i])
+    df = df.with_columns(
+        (pl.col("fwd_return_2Q") * 100).alias("fwd_return_2Q"),
+        (pl.col("fwd_return_4Q") * 100).alias("fwd_return_4Q"),
+        (pl.col("max_return_4Q") * 100).alias("max_return_4Q"),
+    )
+
+    df = df.with_columns(
+        [
+            # Aggressive hits using maximum return
+            (pl.col("max_return_4Q") > 40).cast(pl.Int8).alias("aggressive_hit"),
+            # Balanced risk-reward
+            ((pl.col("max_return_4Q") > 20) & (pl.col("fwd_return_4Q") > 10))
             .cast(pl.Int8)
-            .alias(f"fwd_return_{horizon}_hit"),
-            (pl.col(f"excess_return_{horizon}") > (excess_margins[i] / 2))
+            .alias("balanced_hit"),
+            # Relaxed target for stability
+            ((pl.col("fwd_return_4Q") > 5) & (pl.col("fwd_niq") > pl.col("niq")))
             .cast(pl.Int8)
-            .alias(f"excess_return_{horizon}_hit"),
-            (pl.col(f"risk_return_{horizon}") > (excess_margins[i] / 2))
-            .cast(pl.Int8)
-            .alias(f"risk_return_{horizon}_hit"),
-        )
+            .alias("relaxed_hit"),
+        ]
+    )
+
+    df = df.with_columns(
+        pl.when(pl.col("fwd_niq").is_null())
+        .then(None)
+        .otherwise(pl.col("relaxed_hit"))
+        .alias("relaxed_hit")
+    )
+
+    # Log hit rates for monitoring
+    hit_rates = df.select(
+        [
+            pl.col("aggressive_hit").mean().alias("aggressive_rate"),
+            pl.col("balanced_hit").mean().alias("balanced_rate"),
+            pl.col("relaxed_hit").mean().alias("relaxed_rate"),
+        ]
+    )
+    logger.info(f"Target hit rates: {hit_rates}")
 
     return df
 

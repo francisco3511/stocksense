@@ -1,4 +1,4 @@
-from datetime import datetime
+import datetime as dt
 from typing import Optional
 
 import click
@@ -11,7 +11,7 @@ from stocksense.model import ModelHandler, PortfolioBuilder
 from stocksense.pipeline import ETL, clean, engineer_features
 
 
-def validate_trade_date(ctx, param, value: Optional[datetime]) -> Optional[datetime]:
+def validate_trade_date(ctx, param, value: Optional[dt.datetime]) -> Optional[dt.datetime]:
     """Validate that trade date is 1st of Mar/Jun/Sep/Dec."""
     if value is None:
         return value
@@ -52,7 +52,7 @@ def update():
     help="Trade date (YYYY-MM-DD). Must be 1st of Mar/Jun/Sep/Dec.",
 )
 @click.option("-f", "--force", is_flag=True, help="Force model retraining even if model exists.")
-def train(trade_date: datetime, force: bool):
+def train(trade_date: dt.datetime, force: bool):
     """Train the prediction model for a specific trade date."""
     data = prepare_data()
     handler = ModelHandler(trade_date)
@@ -82,7 +82,7 @@ def train(trade_date: datetime, force: bool):
     default=20,
     help="Number of stocks to include in the portfolio.",
 )
-def portfolio(trade_date: datetime, weighting: str, n_stocks: int):
+def portfolio(trade_date: dt.datetime, weighting: str, n_stocks: int):
     """Build investment portfolio for a specific trade date."""
 
     data = prepare_data()

@@ -5,6 +5,7 @@ import polars as pl
 import pygad
 from loguru import logger
 
+from .utils import format_xgboost_params, get_train_val_splits
 from .xgboost_model import XGBoostClassifier
 
 
@@ -118,69 +119,27 @@ class GeneticAlgorithm:
         self.ga_instance.plot_fitness()
 
 
-def evaluate_top_hit_rate(y_true: np.array, y_pred: np.array, k: int = 25) -> float:
+def evaluate_top_hit_rate(y_true: np.array, y_pred: np.array, k: int = 50) -> float:
     """
-    Evaluate across all predictions at once, selecting top k% overall.
-    """
-    k_total = int(len(y_pred) * (k / 100))
-    top_k_indices = np.argsort(y_pred)[-k_total:]
-    top_hit_rate = np.mean(y_true[top_k_indices] > 0)
-    return round(top_hit_rate, 4) if top_hit_rate > 0 else 0.0001
-
-
-def get_train_val_splits(
-    data: pl.DataFrame, min_train_years: int = 5, val_years: int = 1, max_splits: int = 3
-) -> list[tuple[pl.DataFrame, pl.DataFrame]]:
-    """
-    Generate training/validation splits using expanding window approach,
-    starting from most recent years and moving backwards.
+    Evaluate what percentage of actual positive cases are captured in the top k predictions.
 
     Parameters
     ----------
-    data : pl.DataFrame
-        Training data to split.
-    min_train_years : int
-        Minimum number of years required for training
-    max_splits : int
-        Maximum number of splits to return
+    y_true : np.array
+        True binary labels
+    y_pred : np.array
+        Predicted probabilities
+    k : int
+        Top k percentage to consider
 
     Returns
     -------
-    list[tuple[pl.DataFrame]]
-        List of (train, validation) splits, ordered from most recent to oldest.
+    float
+        Percentage of true positives captured in top k predictions
     """
-    # Get sorted unique quarters
-    quarters = (
-        data.select(pl.col("tdq")).unique().sort("tdq", descending=True).get_column("tdq").to_list()
-    )
-
-    # Convert years to quarters
-    min_train_quarters = min_train_years * 4
-    val_window = val_years * 4
-
-    # Validate enough data exists
-    if len(quarters) < min_train_quarters + val_window:
-        raise ValueError(
-            f"Not enough years in dataset. Need at least {min_train_years + 2} years "
-            f"({min_train_years} for training, 2 for validation)."
-        )
-
-    # Generate expanding window splits
-    splits = []
-    for i in range(0, len(quarters) - min_train_quarters - val_window - 1, val_window):
-        val_quarters = quarters[i : (i + val_window)]
-        train_quarters = quarters[(i + val_window + 4) :]
-        if len(train_quarters) < min_train_quarters:
-            break
-
-        train = data.filter(pl.col("tdq").is_in(train_quarters))
-        val = data.filter(pl.col("tdq").is_in(val_quarters))
-        splits.append((train, val))
-
-    if max_splits and max_splits > 0:
-        splits = splits[:max_splits]
-
-    return splits[::-1]
+    top_k_indices = np.argsort(y_pred)[-k:]
+    hits = np.sum(y_true[top_k_indices] > 0)
+    return float(hits / k)
 
 
 def fitness_function_wrapper(
@@ -225,24 +184,7 @@ def fitness_function_wrapper(
         float
             Fitness value.
         """
-        params = {
-            "objective": "binary:logistic",
-            "learning_rate": solution[0],
-            "n_estimators": 100,
-            "max_depth": round(solution[1]),
-            "min_child_weight": solution[2],
-            "gamma": solution[3],
-            "subsample": solution[4],
-            "colsample_bytree": solution[5],
-            "reg_alpha": solution[6],
-            "reg_lambda": solution[7],
-            "scale_pos_weight": scale,
-            "eval_metric": "logloss",
-            "tree_method": "hist",
-            "nthread": -1,
-            "random_state": 100,
-        }
-
+        params = format_xgboost_params(solution, scale)
         xgb = XGBoostClassifier(params)
         performance_list = []
 
@@ -257,8 +199,8 @@ def fitness_function_wrapper(
                 X_val = val_trade_date.select(features).to_pandas()
                 y_val = val_trade_date.select(target).to_pandas().values.ravel()
                 y_pred = xgb.predict_proba(X_val)
-                performance = evaluate_top_hit_rate(y_val, y_pred, 10)
-                performance_list.append(performance)
+                hit_rate = evaluate_top_hit_rate(y_val, y_pred, k=20)
+                performance_list.append(100 * hit_rate)
 
         avg_performance = round(np.mean(performance_list), 4)
         return avg_performance
