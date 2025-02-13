@@ -1,92 +1,103 @@
 import datetime as dt
-from typing import List, Optional
+from typing import Optional
 
 import polars as pl
 
 
-def format_xgboost_params(solution: List[float], scale: float) -> dict:
+def round_params(params):
+    return [round(v, 3) if isinstance(v, float) else v for v in params.values()]
+
+
+def format_xgboost_params(solution: dict, seed: Optional[int] = None) -> dict:
     """
     Format model parameters.
 
     Parameters
     ----------
-    solution : List[float]
-        GA solution encoded as a list.
-    scale : float
-        Class imbalance scale.
+    solution : dict
+        Parameter solution encoded as a dictionary.
+    seed : Optional[int]
+        Random seed. If None, no seed is set (allows randomness).
     """
-    return {
+    params = {
         "objective": "binary:logistic",
-        "learning_rate": round(solution[0], 3),
-        "n_estimators": round(solution[1]),
-        "max_depth": round(solution[2]),
-        "min_child_weight": round(solution[3], 2),
-        "gamma": round(solution[4], 2),
-        "subsample": round(solution[5], 2),
-        "colsample_bytree": round(solution[6], 2),
-        "reg_alpha": round(solution[7], 2),
-        "reg_lambda": round(solution[8], 2),
-        "scale_pos_weight": scale,
+        "learning_rate": round(solution["learning_rate"], 3),
+        "n_estimators": round(solution["n_estimators"]),
+        "max_depth": round(solution["max_depth"]),
+        "min_child_weight": round(solution["min_child_weight"], 3),
+        "gamma": round(solution["gamma"], 3),
+        "subsample": round(solution["subsample"], 3),
+        "colsample_bytree": round(solution["colsample_bytree"], 3),
+        "reg_alpha": round(solution["reg_alpha"], 3),
+        "reg_lambda": round(solution["reg_lambda"], 3),
+        "scale_pos_weight": round(solution["scale_pos_weight"], 3),
         "eval_metric": "logloss",
         "tree_method": "hist",
         "nthread": -1,
-        "random_state": 100,
     }
+
+    if seed is not None:
+        params["random_state"] = seed
+
+    return params
 
 
 def get_train_val_splits(
-    data: pl.DataFrame, min_train_years: int = 5, val_years: int = 1, max_splits: int = 3
+    data: pl.DataFrame,
+    max_train_years: int = 10,
+    max_splits: int = 1,
 ) -> list[tuple[pl.DataFrame, pl.DataFrame]]:
     """
-    Generate training/validation splits using expanding window approach,
-    starting from most recent years and moving backwards.
-
-    Parameters
-    ----------
-    data : pl.DataFrame
-        Training data to split.
-    min_train_years : int
-        Minimum number of years required for training
-    max_splits : int
-        Maximum number of splits to return
-
-    Returns
-    -------
-    list[tuple[pl.DataFrame]]
-        List of (train, validation) splits, ordered from most recent to oldest.
+    Generate training/validation splits using yearly blocks of validation data.
     """
-    # Get sorted unique quarters
     quarters = (
-        data.select(pl.col("tdq")).unique().sort("tdq", descending=True).get_column("tdq").to_list()
+        data.select(pl.col("tdq"))
+        .unique()
+        .sort("tdq", descending=True)
+        .get_column("tdq")
+        .to_list()
     )
 
-    # Convert years to quarters
-    min_train_quarters = min_train_years * 4
-    val_window = val_years * 4
+    # Get validation periods (4Q blocks)
+    val_years = [quarters[i:i+4] for i in range(0, len(quarters), 4)][:max_splits]
 
-    # Validate enough data exists
-    if len(quarters) < min_train_quarters + val_window:
-        raise ValueError(
-            f"Not enough years in dataset. Need at least {min_train_years + 2} years "
-            f"({min_train_years} for training, 2 for validation)."
-        )
-
-    # Generate expanding window splits
     splits = []
-    for i in range(0, len(quarters) - min_train_quarters - val_window - 1, val_window):
-        val_quarters = quarters[i : (i + val_window)]
-        train_quarters = quarters[(i + val_window + 4) :]
-        if len(train_quarters) < min_train_quarters:
-            break
+    for val_quarters in val_years:
+        last_val_quarter = max(val_quarters)
+        val_idx = quarters.index(last_val_quarter)
+
+        # Add 7 to skip: 4Q validation period + 3Q gap (total 4Q gap )
+        train_start_idx = val_idx + 7
+        train_end_idx = min(train_start_idx + max_train_years * 4, len(quarters))
+        train_quarters = quarters[train_start_idx:train_end_idx]
+
+        if len(train_quarters) < 20:
+            continue
 
         train = data.filter(pl.col("tdq").is_in(train_quarters))
         val = data.filter(pl.col("tdq").is_in(val_quarters))
         splits.append((train, val))
 
-    if max_splits and max_splits > 0:
-        splits = splits[:max_splits]
+    return splits
 
-    return splits[::-1]
+
+def get_train_bounds(
+    trade_date: dt.datetime,
+    max_train_years: int = 10,
+) -> tuple[dt.datetime, dt.datetime]:
+    """
+    Get the training bounds for the model.
+
+    Parameters
+    ----------
+    trade_date : dt.datetime
+        Trade date.
+    max_train_years : int
+        Maximum number of years for training.
+    """
+    start_date = trade_date.replace(year=trade_date.year - 1 - max_train_years)
+    end_date = trade_date.replace(year=trade_date.year - 1)
+    return start_date, end_date
 
 
 def validate_trade_date(date: dt.datetime) -> bool:
@@ -132,3 +143,29 @@ def find_last_trading_date() -> Optional[dt.datetime]:
         return max(past_dates)
     else:
         return None
+
+
+def get_dataset_imbalance_scale(data: pl.DataFrame, target: str) -> float:
+    """
+    Compute dataset class imbalance scale.
+
+    Parameters
+    ----------
+    data : pl.DataFrame
+        Training dataset
+    target : str
+        Target variable to compute class imbalance scale for
+
+    Returns
+    -------
+    float
+        Class imbalance scale (neg_count/pos_count) if significant imbalance exists,
+        otherwise 1.0
+    """
+    neg_count = len(data.filter(pl.col(target) == 0))
+    pos_count = len(data.filter(pl.col(target) == 1))
+
+    if pos_count == 0:
+        return 1.0
+
+    return round(neg_count / pos_count, 2)

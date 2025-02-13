@@ -1,7 +1,7 @@
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Dict, List
 
 import yaml
 from pydantic import (
@@ -100,8 +100,7 @@ class ModelConfig(BaseModel):
     targets: List[str]
     id_col: str
     date_col: str
-    min_train_years: int = Field(ge=5, le=50)
-    ga: Dict[str, Any]
+    max_train_years: int = Field(ge=5, le=12)
 
     @model_validator(mode="after")
     def validate_column_names(self) -> "ModelConfig":
@@ -115,14 +114,6 @@ class ModelConfig(BaseModel):
     def feature_count(self) -> int:
         """Get the number of features."""
         return len(self.features)
-
-    @property
-    def window_sizes(self) -> Dict[str, int]:
-        """Get all window sizes in a dictionary."""
-        return {
-            "train": self.train_window,
-            "validation": self.val_window,
-        }
 
 
 class DatabaseConfig(BaseModel):

@@ -82,7 +82,8 @@
     - 'roi_yoy'
     - 'roi_2y'
     - 'roe_yoy'
-    - 'fcf_yoy'
+    - 'fcf_ttm_yoy'
+    - 'fcf_ttm_2y'
     - 'der_yoy'
     - 'dr_yoy'
     - 'dr_2y'
@@ -102,7 +103,7 @@
     - 'roa_sec_rank'
     - 'saleq_yoy_mkt_rank'
     - 'saleq_yoy_sec_rank'
-    - 'fcf_sec_rank'
+    - 'fcf_ttm_sec_rank'
     - 'der_mkt_rank'
     - 'der_sec_rank'
     - 'price_mom_mkt_rank'
@@ -123,33 +124,8 @@
     - 'sector_real_estate'
 'targets':
     - 'aggressive_hit'
-    - 'balanced_hit'
-    - 'relaxed_hit'
+    - 'moderate_hit'
 'id_col': 'tic'
 'date_col': 'tdq'
-'min_train_years': 10
+'max_train_years': 10
 'max_splits': 3
-'ga':
-    'num_generations': 5
-    'num_parents_mating': 10
-    'sol_per_pop': 60
-    'num_genes': 9
-    'mutation_percent_genes': 10
-    'crossover_probability': 0.8
-    'parent_selection_type': "tournament"
-    'keep_parents': 3
-    'mutation_type': "random"
-    'crossover_type': "single_point"
-    'init_range_low': [0.01, 100, 3, 2.0, 0.0, 0.6, 0.6, 0.0, 1.0]
-    'init_range_high': [0.2, 200, 8, 7.0, 0.5, 0.9, 0.9, 10.0, 10.0]
-    'gene_space': [
-        {"low": 0.01, "high": 0.2, "step": 0.01},
-        {"low": 100, "high": 200, "step": 25},
-        {"low": 3, "high": 8, "step": 1},
-        {"low": 2.0, "high": 7.0, "step": 0.5},
-        {"low": 0.0, "high": 0.5, "step": 0.05},
-        {"low": 0.6, "high": 0.9, "step": 0.05},
-        {"low": 0.6, "high": 0.9, "step": 0.05},
-        {"low": 0.0, "high": 10.0, "step": 0.5},
-        {"low": 1.0, "high": 10.0, "step": 0.5},
-    ]

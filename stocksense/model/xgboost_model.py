@@ -29,7 +29,7 @@ class BaseXGBoostModel:
             "reg_lambda": 1,
             "tree_method": "hist",
             "nthread": -1,
-            "random_state": 100,
+            "random_state": 0,
         }
 
     def save_model(self, model_path: Path) -> None:
@@ -54,7 +54,14 @@ class XGBoostClassifier(BaseXGBoostModel):
 
     def _default_params(self):
         params = super()._default_params()
-        params.update({"objective": "binary:logistic", "eval_metric": "logloss", "nthread": -1})
+        params.update(
+            {
+                "objective": "binary:logistic",
+                "eval_metric": "logloss",
+                "nthread": -1,
+                "random_state": 0,
+            }
+        )
         return params
 
     def train(self, X_train: np.ndarray, y_train: np.ndarray) -> None:
@@ -98,8 +105,7 @@ class XGBoostRegressor(BaseXGBoostModel):
                 "objective": "reg:absoluteerror",
                 "eval_metric": "mae",
                 "tree_method": "hist",
-                "nthread": -1,
-                "random_state": 100,
+                "nthread": -1
             }
         )
         return params

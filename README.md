@@ -5,7 +5,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 
-This project implements an intelligent dynamic stock selection system using **Adaptive Genetic Algorithm-optimized XGBoost** (GA-XGBoost) ensemble models to identify stocks with potential market outperformance in the medium to long term. The model analyzes quarterly financial statements, market data, insider trading patterns and other external data to rank and select stocks that will outperform the S&P 500 index over a one-year horizon. The project includes a **Streamlit-based analytics dashboard** that provides comprehensive stock analysis tools, including technical indicators, financial metrics visualization, and model-driven insights.
+This project implements an intelligent dynamic stock selection system using **Optuna-optimized XGBoost** (Optuna-XGBoost) ensemble models to identify stocks with potential market outperformance in the medium to long term. The model analyzes quarterly financial statements, market data, insider trading patterns and other external data to rank and select stocks that will outperform the S&P 500 index over a one-year horizon. The project includes a **Streamlit-based analytics dashboard** that provides comprehensive stock analysis tools, including technical indicators, financial metrics visualization, and model-driven insights.
 
 
 ## Table of Contents
@@ -43,7 +43,7 @@ The core engine combines three key components:
      - Model retraining with expanding window of historical data
 
    - Stock Scoring Process:
-     - GA-XGBoost classifier generates outperformance probabilities
+     - Optuna-XGBoost classifier generates outperformance probabilities
      - Stocks ranked by probability of beating S&P 500 over next 12 months
      - Feature importance analysis for investment decision transparency
      - Portfolio rebalancing recommendations based on new scores
@@ -62,7 +62,7 @@ The system maintains a SQLite database for efficient data management and provide
 ## Features
 
 - **Model Training**
-  - Adapative GA-XGBoost classifier with optimized hyperparameters
+  - Optuna-XGBoost classifier with optimized hyperparameters
   - Feature engineering including growth ratios, financial metrics, price momentum, and volatility
   - Expanding window cross-validation and performance metrics
 

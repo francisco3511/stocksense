@@ -248,7 +248,7 @@ def compute_insider_purchases(df: pl.DataFrame, insider_df: pl.DataFrame) -> pl.
         insider_filtered_lazy, how="inner", left_on=["tic"], right_on=["tic"]
     ).filter(
         (pl.col("filling_date") < pl.col("tdq"))
-        & (pl.col("filling_date") >= pl.col("tdq").dt.offset_by("-12mo"))
+        & (pl.col("filling_date") >= pl.col("tdq").dt.offset_by("-3mo"))
     )
     df_agg_lazy = df_filtered_lazy.group_by(["tic", "tdq"]).agg(
         [
@@ -288,7 +288,7 @@ def compute_insider_sales(df: pl.DataFrame, insider_df: pl.DataFrame) -> pl.Data
         insider_filtered_lazy, how="inner", left_on=["tic"], right_on=["tic"]
     ).filter(
         (pl.col("filling_date") < pl.col("tdq"))
-        & (pl.col("filling_date") >= pl.col("tdq").dt.offset_by("-12mo"))
+        & (pl.col("filling_date") >= pl.col("tdq").dt.offset_by("-3mo"))
     )
 
     df_agg_lazy = df_filtered_lazy.group_by(["tic", "tdq"]).agg(
@@ -373,23 +373,31 @@ def compute_financial_features(df: pl.DataFrame) -> pl.DataFrame:
     df = df.lazy().with_columns(
         # Profitability ratios
         (pl.col("niq").rolling_sum(4) / pl.col("atq") * 100).over("tic").alias("roa"),
+        (pl.col("niq")).rolling_sum(4).over("tic").alias("ni_ttm"),
         (pl.col("niq") / pl.col("icaptq") * 100).over("tic").alias("roi"),
         (pl.col("niq").rolling_sum(4) / pl.col("seqq")).over("tic").alias("roe"),
+
         # Margin ratios
         ((pl.col("saleq") - pl.col("cogsq")) / pl.col("saleq") * 100).alias("gpm"),
         (pl.col("ebitdaq") / pl.col("saleq") * 100).alias("ebitdam"),
         (pl.col("oancfq") / pl.col("saleq") * 100).alias("cfm"),
         (pl.col("oancfq") - pl.col("capxq")).alias("fcf"),
+        (pl.col("oancfq").rolling_sum(4) - pl.col("capxq")
+            .rolling_sum(4))
+            .over("tic").alias("fcf_ttm"),
+
         # Liquidity ratios
         (pl.col("actq") / pl.col("lctq") * 100).alias("cr"),
         ((pl.col("rectq") + pl.col("cheq")) / pl.col("lctq") * 100).alias("qr"),
         (pl.col("cheq") / pl.col("lctq") * 100).alias("csr"),
+
         # Leverage ratios
         (pl.col("ltq") / pl.col("atq") * 100).alias("dr"),
         (pl.col("ltq") / pl.col("seqq") * 100).alias("der"),
         (pl.col("ltq") / pl.col("ebitdaq") * 100).alias("debitda"),
         (pl.col("dlttq") / pl.col("atq") * 100).alias("ltda"),
         ((pl.col("oancfq") - pl.col("capxq")) / pl.col("dlttq") * 100).alias("ltcr"),
+
         # Efficiency ratios
         (pl.col("saleq") / pl.col("invtq").rolling_mean(2, min_periods=1)).over("tic").alias("itr"),
         (pl.col("saleq") / pl.col("rectq").rolling_mean(2, min_periods=1)).over("tic").alias("rtr"),
@@ -404,9 +412,8 @@ def compute_financial_features(df: pl.DataFrame) -> pl.DataFrame:
     )
 
     df = df.with_columns(
-        ((pl.col("tdq").cast(pl.Date) - pl.col("rdq").cast(pl.Date)) / pl.duration(days=1)).alias(
-            "days_since_earnings"
-        )
+        ((pl.col("tdq").cast(pl.Date) - pl.col("rdq").cast(pl.Date)) / pl.duration(days=1))
+        .alias("days_since_earnings")
     )
 
     return df.collect()
@@ -652,32 +659,27 @@ def compute_forward_returns(df: pl.DataFrame) -> pl.DataFrame:
 
     df = df.lazy().sort(["tic", "date"])
 
-    # For each target period, compute average return over the window
     for period_end, suffix, window_size in return_windows:
-        # Calculate returns for each day in the window
         window_start = period_end - window_size + 1
         window_returns = [
             ((pl.col("adj_close").shift(-i) / pl.col("adj_close")) - 1).over("tic")
             for i in range(window_start, period_end + 1)
         ]
 
-        # Average the returns in the window
         df = df.with_columns(pl.mean_horizontal(window_returns).alias(f"fwd_return_{suffix}"))
 
     df = df.with_columns(
-        [
-            # Get maximum return achievable in next 252 days
-            (
-                pl.max_horizontal(
-                    [
-                        (pl.col("adj_close").shift(-i) / pl.col("adj_close")) - 1
-                        for i in range(21, config.processing.trade_days_year)
-                    ]
-                )
+        # Get maximum return achievable in next 252 days
+        (
+            pl.max_horizontal(
+                [
+                    (pl.col("adj_close").shift(-i) / pl.col("adj_close")) - 1
+                    for i in range(21, config.processing.trade_days_year)
+                ]
             )
-            .over("tic")
-            .alias("max_return_4Q")
-        ]
+        )
+        .over("tic")
+        .alias("max_return_4Q")
     )
 
     return df.collect()
@@ -777,29 +779,25 @@ def compute_volatility_features(df: pl.DataFrame) -> pl.DataFrame:
 
     # Compute downside volatility by taking sqrt of mean of squared negative returns
     df = df.with_columns(
-        [
-            (
-                pl.col("squared_downside_return")
-                .rolling_mean(config.processing.trade_days_quarter, min_periods=10)
-                .over("tic")
-                .sqrt()
-                .alias("downside_vol_qoq")
-            ),
-            (
-                pl.col("squared_downside_return")
-                .rolling_mean(config.processing.trade_days_year, min_periods=10)
-                .over("tic")
-                .sqrt()
-                .alias("downside_vol_yoy")
-            ),
-        ]
+        (
+            pl.col("squared_downside_return")
+            .rolling_mean(config.processing.trade_days_quarter, min_periods=10)
+            .over("tic")
+            .sqrt()
+            .alias("downside_vol_qoq")
+        ),
+        (
+            pl.col("squared_downside_return")
+            .rolling_mean(config.processing.trade_days_year, min_periods=10)
+            .over("tic")
+            .sqrt()
+            .alias("downside_vol_yoy")
+        ),
     )
 
     df = df.with_columns(
-        [
-            (pl.col("downside_vol_yoy") / pl.col("vol_yoy")).alias("downside_risk_ratio_yoy"),
-            (pl.col("downside_vol_qoq") / pl.col("vol_qoq")).alias("downside_risk_ratio_qoq"),
-        ]
+        (pl.col("downside_vol_yoy") / pl.col("vol_yoy")).alias("downside_risk_ratio_yoy"),
+        (pl.col("downside_vol_qoq") / pl.col("vol_qoq")).alias("downside_risk_ratio_qoq")
     )
     return df
 
@@ -1029,7 +1027,7 @@ def compute_growth_features(df: pl.DataFrame) -> pl.DataFrame:
         "roa": [year_lag, two_year_lag],
         "roi": [year_lag, two_year_lag],
         "roe": [year_lag, two_year_lag],
-        "fcf": [year_lag, two_year_lag],
+        "fcf_ttm": [year_lag, two_year_lag],
         "cr": [year_lag, two_year_lag],
         "qr": [year_lag, two_year_lag],
         "der": [year_lag, two_year_lag],
@@ -1128,50 +1126,52 @@ def compute_cross_sectional_features(df: pl.DataFrame) -> pl.DataFrame:
     df = df.sort(["tic", "tdq"])
 
     # Basic rankings
-    rank_metrics = ["pe", "ev_ebitda", "saleq_yoy", "roa", "fcf", "der", "price_mom", "price_yoy"]
+    rank_metrics = [
+        "pe", "ev_ebitda", "saleq_yoy", "roa", "fcf_ttm", "der", "price_mom", "price_yoy"
+    ]
 
     for metric in rank_metrics:
         df = df.with_columns(pl.col(metric).replace(float("inf"), float("nan")).alias(metric))
         df = df.with_columns(
-            [
-                # Overall deciles
-                (
-                    pl.when(pl.col(metric).is_nan())
-                    .then(None)
-                    .otherwise(
+
+            # Overall deciles
+            (
+                pl.when(pl.col(metric).is_nan())
+                .then(None)
+                .otherwise(
+                    (
                         (
-                            (
-                                pl.col(metric).rank("ordinal").over("tdq").cast(pl.Float64)
-                                / pl.col(metric)
-                                .filter(~pl.col(metric).is_nan())
-                                .count()
-                                .over("tdq")
-                            )
-                            * 10
-                        ).ceil()
-                    )
-                ).alias(f"{metric}_mkt_rank"),
-                # Sector deciles
-                (
-                    pl.when(pl.col(metric).is_nan())
-                    .then(None)
-                    .otherwise(
+                            pl.col(metric).rank("ordinal").over("tdq").cast(pl.Float64)
+                            / pl.col(metric)
+                            .filter(~pl.col(metric).is_nan())
+                            .count()
+                            .over("tdq")
+                        )
+                        * 10
+                    ).ceil()
+                )
+            ).alias(f"{metric}_mkt_rank"),
+
+            # Sector deciles
+            (
+                pl.when(pl.col(metric).is_nan())
+                .then(None)
+                .otherwise(
+                    (
                         (
-                            (
-                                pl.col(metric)
-                                .rank("ordinal")
-                                .over(["tdq", "sector"])
-                                .cast(pl.Float64)
-                                / pl.col(metric)
-                                .filter(~pl.col(metric).is_nan())
-                                .count()
-                                .over(["tdq", "sector"])
-                            )
-                            * 10
-                        ).ceil()
-                    )
-                ).alias(f"{metric}_sec_rank"),
-            ]
+                            pl.col(metric)
+                            .rank("ordinal")
+                            .over(["tdq", "sector"])
+                            .cast(pl.Float64)
+                            / pl.col(metric)
+                            .filter(~pl.col(metric).is_nan())
+                            .count()
+                            .over(["tdq", "sector"])
+                        )
+                        * 10
+                    ).ceil()
+                )
+            ).alias(f"{metric}_sec_rank"),
         )
 
     return df
@@ -1183,9 +1183,10 @@ def filter_sp500_membership(df: pl.DataFrame) -> pl.DataFrame:
     """
     df = df.sort(["tic", "tdq"])
     df = df.with_columns(
-        [
-            pl.col("mkt_cap").rank("ordinal", descending=True).over("tdq").alias("mkt_cap_rank"),
-        ]
+        pl.col("mkt_cap")
+         .rank("ordinal", descending=True)
+         .over("tdq")
+         .alias("mkt_cap_rank")
     )
     df = df.filter((pl.col("mkt_cap_rank") <= 550))
     return df
@@ -1197,37 +1198,34 @@ def compute_performance_targets(df: pl.DataFrame) -> pl.DataFrame:
     """
     df = df.sort(["tic", "tdq"])
     df = df.with_columns(
-        [
-            # Forward volatility for risk adjustment
-            pl.col("vol_yoy").shift(-4).over("tic").alias("fwd_vol_yoy"),
-            pl.col("downside_vol_yoy").shift(-4).over("tic").alias("fwd_downside_vol_yoy"),
-            # Forward financial metrics (4Q ahead)
-            ((pl.col("saleq").shift(-4) / pl.col("saleq")).over("tic") - 1).alias(
-                "fwd_sales_growth"
-            ),
-            pl.col("roa").shift(-4).over("tic").alias("fwd_roa"),
-            pl.col("niq").shift(-4).over("tic").alias("fwd_niq"),
-            pl.col("fcf").shift(-4).over("tic").alias("fwd_fcf"),
-            pl.col("der").shift(-4).over("tic").alias("fwd_der"),
-            pl.col("f_score").shift(-4).over("tic").alias("fwd_f_score"),
-        ]
+        # Forward volatility for risk adjustment
+        pl.col("vol_yoy").shift(-4).over("tic").alias("fwd_vol_yoy"),
+        pl.col("downside_vol_yoy").shift(-4).over("tic").alias("fwd_downside_vol_yoy"),
+
+        # Forward financial metrics (4Q ahead)
+        pl.col("roa").shift(-4).over("tic").alias("fwd_roa"),
+        pl.col("niq").shift(-4).over("tic").alias("fwd_niq"),
+        pl.col("ni_ttm").shift(-4).over("tic").alias("fwd_ni_ttm"),
+        pl.col("fcf_ttm").shift(-4).over("tic").alias("fwd_fcf_ttm"),
+        pl.col("der").shift(-4).over("tic").alias("fwd_der")
     )
 
     df = df.with_columns(
         # Risk-adjusted return
-        (pl.col("fwd_return_4Q") / pl.col("fwd_vol_yoy").mul(np.sqrt(252))).alias("risk_return_4Q"),
+        (pl.col("max_return_4Q") / pl.col("fwd_vol_yoy").mul(np.sqrt(252))).alias("risk_return_4Q"),
+
         # Sortino ratio
-        (pl.col("fwd_return_4Q") / pl.col("fwd_downside_vol_yoy").mul(np.sqrt(252))).alias(
-            "sortino_4Q"
-        ),
+        (pl.col("fwd_return_4Q") / pl.col("fwd_downside_vol_yoy").mul(np.sqrt(252)))
+        .alias("sortino_4Q"),
+
         # Excess return
-        ((pl.col("fwd_return_4Q") - pl.col("avg_index_fwd_return_4Q")) * 100).alias(
-            "excess_return_4Q"
-        ),
+        ((pl.col("fwd_return_4Q") - pl.col("avg_index_fwd_return_4Q")) * 100)
+        .alias("excess_return_4Q"),
+
         # Sharpe ratio
-        (
-            (pl.col("fwd_return_4Q") - pl.col("avg_index_fwd_return_4Q")) / pl.col("fwd_vol_yoy")
-        ).alias("sharpe_ratio_4Q"),
+        ((pl.col("fwd_return_4Q") - pl.col("avg_index_fwd_return_4Q")) /
+         pl.col("fwd_vol_yoy").mul(np.sqrt(252)))
+        .alias("sharpe_ratio_4Q"),
     )
 
     df = df.with_columns(
@@ -1237,34 +1235,21 @@ def compute_performance_targets(df: pl.DataFrame) -> pl.DataFrame:
     )
 
     df = df.with_columns(
-        [
-            # Aggressive hits using maximum return
-            (pl.col("max_return_4Q") > 40).cast(pl.Int8).alias("aggressive_hit"),
-            # Balanced risk-reward
-            ((pl.col("max_return_4Q") > 20) & (pl.col("fwd_return_4Q") > 10))
+        # Aggressive hits using maximum return (prev best max_return_4Q > 40)
+        (pl.col("max_return_4Q") > 40)
             .cast(pl.Int8)
-            .alias("balanced_hit"),
-            # Relaxed target for stability
-            ((pl.col("fwd_return_4Q") > 5) & (pl.col("fwd_niq") > pl.col("niq")))
-            .cast(pl.Int8)
-            .alias("relaxed_hit"),
-        ]
-    )
+            .alias("aggressive_hit"),
 
-    df = df.with_columns(
-        pl.when(pl.col("fwd_niq").is_null())
-        .then(None)
-        .otherwise(pl.col("relaxed_hit"))
-        .alias("relaxed_hit")
+        # Moderate risk-reward (prev best sharpe_ratio_4Q > 0.3)
+        ((pl.col("risk_return_4Q") > 1.6))
+            .cast(pl.Int8)
+            .alias("moderate_hit")
     )
 
     # Log hit rates for monitoring
     hit_rates = df.select(
-        [
-            pl.col("aggressive_hit").mean().alias("aggressive_rate"),
-            pl.col("balanced_hit").mean().alias("balanced_rate"),
-            pl.col("relaxed_hit").mean().alias("relaxed_rate"),
-        ]
+        pl.col("aggressive_hit").mean().alias("aggressive_rate"),
+        pl.col("moderate_hit").mean().alias("moderate_rate")
     )
     logger.info(f"Target hit rates: {hit_rates}")
 
