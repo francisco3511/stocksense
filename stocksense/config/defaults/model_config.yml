@@ -125,6 +125,7 @@
 'targets':
     - 'aggressive_hit'
     - 'moderate_hit'
+    - 'relaxed_hit'
 'id_col': 'tic'
 'date_col': 'tdq'
 'max_train_years': 10

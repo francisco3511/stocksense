@@ -102,7 +102,8 @@ class PortfolioBuilder:
         """
         return df.filter(
             (pl.col("saleq_yoy") > -20) &
-            (pl.col("price_mom") > -25)
+            (pl.col("price_mom") > -25) &
+            (pl.col("avg_score") > 60)
         )
 
     def _equal_weight(self, portfolio: pl.DataFrame) -> np.ndarray:

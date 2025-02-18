@@ -55,7 +55,6 @@ class ModelHandler:
                 trade_date_model_dir = MODEL_DIR / f"{self.trade_date.date()}"
                 trade_date_model_dir.mkdir(parents=True, exist_ok=True)
                 model_file = trade_date_model_dir / f"{target}.pkl"
-
                 if model_file.exists() and not retrain:
                     logger.warning(f"Model already exists for {target}, {self.trade_date}")
                     continue
@@ -70,8 +69,7 @@ class ModelHandler:
                     (~pl.all_horizontal(pl.col(target).is_null()))
                 ).select(["tdq", "tic"] + self.features + [target])
 
-                best_params = self.optimize(train, self.features, target)
-
+                best_params = self._optimize(train, self.features, target)
                 train = train.filter(pl.col("tdq") > start_date)
                 final_params = format_xgboost_params(best_params, 100)
 
@@ -80,7 +78,6 @@ class ModelHandler:
 
                 X_train = train.select(self.features).to_pandas()
                 y_train = train.select(target).to_pandas().values.ravel()
-
                 model = XGBoostClassifier(final_params)
                 model.train(X_train, y_train)
                 model.save_model(model_file)
@@ -90,7 +87,7 @@ class ModelHandler:
             logger.error(f"ERROR: failed to train model - {e}")
             raise
 
-    def optimize(
+    def _optimize(
         self,
         train: pl.DataFrame,
         features: List[str],
@@ -108,7 +105,7 @@ class ModelHandler:
         target : str
             Target variable to optimize model for.
         """
-        optimizer = OptunaOptimizer(n_trials=600)
+        optimizer = OptunaOptimizer(n_trials=500)
         best_solution = optimizer.optimize(
             train,
             features,
@@ -117,7 +114,7 @@ class ModelHandler:
         )
         return best_solution
 
-    def score(self, data: pl.DataFrame, stocks: list[str]) -> None:
+    def score(self, data: pl.DataFrame) -> None:
         """
         Score stocks using rank-based ensemble of target-specific models.
 
@@ -125,8 +122,6 @@ class ModelHandler:
         ----------
         data : pl.DataFrame
             Preprocessed financial data.
-        stocks : list[str]
-            List of stocks to score.
 
         Returns
         -------
@@ -135,12 +130,12 @@ class ModelHandler:
         """
         try:
             logger.info(f"START stocksense eval - {self.trade_date}")
-            test = data.filter((pl.col("tdq") == self.trade_date) & pl.col("tic").is_in(stocks))
+            test = data.filter((pl.col("tdq") == self.trade_date))
             final_ranks = test.clone()
             pred_cols = []
             perc_cols = []
 
-            # Get predictions for each target
+            # Score along each target
             for target in self.targets:
                 trade_date_model_dir = MODEL_DIR / f"{self.trade_date.date()}"
                 model_file = trade_date_model_dir / f"{target}.pkl"
@@ -174,14 +169,14 @@ class ModelHandler:
             ).sort("avg_score", descending=True)
 
             report_cols = ["tic", "adj_close", "max_return_4Q", "fwd_return_4Q", "avg_score"]
-            self.save_scoring_report(final_ranks.select(report_cols + pred_cols))
+            self._save_scoring_report(final_ranks.select(report_cols + pred_cols))
 
             return final_ranks
         except Exception as e:
             logger.error(f"ERROR: failed to score stocks - {e}")
             raise
 
-    def save_scoring_report(self, rank_data: pl.DataFrame) -> None:
+    def _save_scoring_report(self, rank_data: pl.DataFrame) -> None:
         """
         Save scoring report csv with ranks for each target and average rank.
 

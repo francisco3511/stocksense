@@ -338,6 +338,75 @@ class ETL:
             logger.error(f"{tic}: insider data extraction FAILED ({e})")
             return False
 
+    def restore_delisted_stocks_data(self) -> None:
+        """
+        Restore market data for delisted stocks from historical CSV files.
+        This prevents newer data from companies reusing tickers from
+        overwriting historical records.
+        """
+
+        # Get all delisted stocks
+        cutoff_date = dt.date(2018, 1, 1)
+        delisted_stocks = (
+            self.db.fetch_stock()
+            .filter(
+                (pl.col("date_removed").is_not_null())
+                & (pl.col("date_removed") < cutoff_date)
+            )
+            ["tic"]
+            .to_list()
+        )
+
+        logger.info(f"Restoring market data for {delisted_stocks}")
+        prices_file = DATA_PATH / "raw" / "prices_2005-01-01_2018-12-31.csv"
+
+        with open(prices_file) as f:
+            data_types = f.readline().strip().split(',')[1:]
+            tickers = f.readline().strip().split(',')[1:]
+
+        columns = (
+            ['date'] +
+            [f"{dtype}_{tic}" for dtype, tic in zip(data_types, tickers, strict=True)]
+        )
+
+        df = pl.read_csv(
+            prices_file,
+            has_header=False,
+            skip_rows=2,
+            new_columns=columns
+        )
+
+        df = df.filter(pl.col("date") != "Date")
+        stock_cols = ['date']
+        for stock in delisted_stocks:
+            stock_cols.extend([
+                col for col in df.columns
+                if col.endswith(f"_{stock}")
+                and any(prefix in col for prefix in ["Close", "Adj Close", "Volume"])
+            ])
+
+        df = df.select(stock_cols)
+
+        for tic in delisted_stocks:
+            try:
+                stock_df = df.select([
+                    pl.col("date").str.to_date(),
+                    pl.col(f"Close_{tic}").cast(pl.Float64).alias("close"),
+                    pl.col(f"Adj Close_{tic}").cast(pl.Float64).alias("adj_close"),
+                    pl.col(f"Volume_{tic}").cast(pl.Int64).alias("volume"),
+                    pl.lit(tic).alias("tic")
+                ])
+                stock_df = stock_df.filter(pl.col("close").is_not_null())
+
+                if not stock_df.is_empty():
+                    self.db.delete_market_data(tic)
+                    stock_df = stock_df[["tic", "date", "close", "adj_close", "volume"]]
+                    self.db.insert_market_data(stock_df)
+
+            except Exception as e:
+                logger.error(f"error restoring market data for {tic}: {e}")
+                continue
+
     def ingest_all_historical_data(self):
         """
         Ingest historical stock data stored in .csv files.

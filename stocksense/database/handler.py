@@ -71,6 +71,10 @@ class DatabaseHandler:
         conn = self.db.get_connection()
         delete_data(conn, "financial", {"tic": tic})
 
+    def delete_market_data(self, tic: str) -> None:
+        conn = self.db.get_connection()
+        delete_data(conn, "market", {"tic": tic})
+
     def update_stock(self, tic: str, update_values: dict) -> None:
         conn = self.db.get_connection()
         update_data(conn, "stock", update_values, {"tic": tic})

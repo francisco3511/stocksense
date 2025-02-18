@@ -6,7 +6,6 @@ import polars as pl
 
 from stocksense import __version__
 from stocksense.config import config
-from stocksense.database import DatabaseHandler
 from stocksense.model import ModelHandler, PortfolioBuilder
 from stocksense.pipeline import ETL, clean, engineer_features
 
@@ -86,10 +85,8 @@ def portfolio(trade_date: dt.datetime, weighting: str, n_stocks: int):
     """Build investment portfolio for a specific trade date."""
 
     data = prepare_data()
-    constituents = DatabaseHandler().fetch_constituents(trade_date)
-
     handler = ModelHandler(trade_date)
-    ranks = handler.score(data, constituents)
+    ranks = handler.score(data)
 
     portfolio = PortfolioBuilder(weighting)
     portfolio.build_portfolio(n_stocks, trade_date, ranks)

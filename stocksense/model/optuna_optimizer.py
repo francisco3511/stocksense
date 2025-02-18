@@ -28,7 +28,7 @@ class OptunaOptimizer:
         Best objective value achieved during optimization
     """
 
-    def __init__(self, n_trials: int = 300):
+    def __init__(self, n_trials: int = 600):
         self.n_trials = n_trials
         self.study = None
         self.best_params = None
@@ -39,20 +39,20 @@ class OptunaOptimizer:
         """Create a new Optuna study."""
         logger.info("Creating Optuna study")
 
-        n_startup = int(self.n_trials * 0.35)
+        n_startup = int(self.n_trials * 0.3)
 
         sampler = optuna.samplers.TPESampler(
             n_startup_trials=n_startup,
             multivariate=True,
             group=True,
             constant_liar=False,
-            seed=100
+
         )
 
         pruner = optuna.pruners.PercentilePruner(
-            percentile=10.0,
+            percentile=50.0,
             n_startup_trials=n_startup,
-            n_warmup_steps=1,
+            n_warmup_steps=0,
             interval_steps=1,
             n_min_trials=30
         )
@@ -103,22 +103,21 @@ class OptunaOptimizer:
 
         def objective(trial: optuna.Trial) -> float:
             """
-            Optuna objective function with pruning based on first split performance.
-            Uses a more conservative pruning strategy given the importance of multiple periods.
+            Optuna objective function.
             """
 
             base_scale = get_dataset_imbalance_scale(splits[-1][0], target)
 
             params = {
-                'learning_rate': trial.suggest_float('learning_rate', 0.005, 0.3, log=True),
-                'n_estimators': trial.suggest_int('n_estimators', 100, 500, step=100),
-                'max_depth': trial.suggest_int('max_depth', 3, 9),
-                'min_child_weight': trial.suggest_float('min_child_weight', 0.1, 9.0),
+                'learning_rate': trial.suggest_float('learning_rate', 0.01, 0.4, log=True),
+                'n_estimators': trial.suggest_int('n_estimators', 100, 800, step=100),
+                'max_depth': trial.suggest_int('max_depth', 3, 8),
+                'min_child_weight': trial.suggest_float('min_child_weight', 1e-3, 6.0),
                 'gamma': trial.suggest_float('gamma', 1e-3, 1.0, log=True),
                 'subsample': trial.suggest_float('subsample', 0.5, 1.0),
                 'colsample_bytree': trial.suggest_float('colsample_bytree', 0.5, 1.0),
-                'reg_alpha': trial.suggest_float('reg_alpha', 1e-4, 15.0, log=True),
-                'reg_lambda': trial.suggest_float('reg_lambda', 1e-4, 15.0, log=True),
+                'reg_alpha': trial.suggest_float('reg_alpha', 1e-4, 5.0, log=True),
+                'reg_lambda': trial.suggest_float('reg_lambda', 1e-4, 5.0, log=True),
                 'scale_pos_weight': trial.suggest_float(
                     'scale_pos_weight',
                     1.0,
@@ -144,7 +143,7 @@ class OptunaOptimizer:
                     y_true = val_trade_date.select(target).to_pandas().values.ravel()
                     y_pred_proba = xgb.predict_proba(X_val)
 
-                    perf = evaluate_multi_threshold_hit_rate(y_true, y_pred_proba)
+                    perf = evaluate_hit_rate_improvement(y_true, y_pred_proba)
                     performance_list.append(perf)
 
                 accumulated_performance = np.mean(performance_list)
@@ -187,26 +186,11 @@ class OptunaOptimizer:
         return self.best_params
 
 
-def evaluate_hit_rate_improvement(y_true: np.array, y_pred: np.array, k: int = 50) -> float:
-    """
-    Evaluate relative improvement over baseline, more stable for all baselines.
-    """
-    baseline_hr = np.mean(y_true)
-    top_indices = np.argsort(y_pred)[-k:]
-    actual_hr = np.mean(y_true[top_indices])
-    if baseline_hr == 0:
-        return 0
-    elif actual_hr == 0:
-        return 0
-    else:
-        return actual_hr / baseline_hr
-
-
-def evaluate_multi_threshold_hit_rate(y_true: np.array, y_pred: np.array) -> float:
+def evaluate_hit_rate_improvement(y_true: np.array, y_pred: np.array) -> float:
     """
     Evaluate hit rates at multiple top-k thresholds relevant for stock selection.
     """
-    thresholds = [0.02, 0.05, 0.1]
+    thresholds = [0.03, 0.05, 0.1]
     scores = []
 
     for k in thresholds:

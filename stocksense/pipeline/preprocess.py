@@ -29,7 +29,6 @@ def engineer_features() -> pl.DataFrame:
         index_data = db.fetch_index_data()
         vix_data = db.fetch_vix_data()
 
-        # feature engineering
         logger.info("START feature engineering")
         df = compute_trade_date(df)
         df = adjust_shares(df)
@@ -45,7 +44,7 @@ def engineer_features() -> pl.DataFrame:
         df = compute_performance_targets(df)
 
         # filter SP500 membership and compute cross-sectional features
-        df = filter_sp500_membership(df)
+        df = filter_sp500_constituents(df, info)
         df = compute_industry_features(df, info)
         df = compute_cross_sectional_features(df)
         df = compute_sector_dummies(df)
@@ -104,11 +103,12 @@ def clean(df: pl.DataFrame) -> pl.DataFrame:
         ]
     )
 
-    df = df.filter(~pl.all_horizontal(pl.col("roa").is_null()))
+    df = df.filter(~pl.all_horizontal(pl.col("niq").is_null()))
     df = df.filter(~pl.all_horizontal(pl.col("price_yoy").is_null()))
     df = df.sort(["tic", "tdq"]).unique(subset=["tic", "tdq"], keep="last", maintain_order=True)
     df = df.sort(["tic", "tdq"])
 
+    log_hit_rates(df)
     logger.success(f"{df.shape[0]} rows retained after CLEANING")
     return df
 
@@ -128,7 +128,7 @@ def compute_trade_date(df: pl.DataFrame) -> pl.DataFrame:
     pl.DataFrame
         Data with trade date intervals.
     """
-    # correct rdq if it is the same as quarter end date
+    # Correct rdq if it is the same as quarter end date
     df = df.with_columns(
         pl.when(pl.col("rdq") == pl.col("datadate"))
         .then(pl.col("datadate") + pl.duration(days=90))
@@ -670,16 +670,20 @@ def compute_forward_returns(df: pl.DataFrame) -> pl.DataFrame:
 
     df = df.with_columns(
         # Get maximum return achievable in next 252 days
-        (
-            pl.max_horizontal(
-                [
-                    (pl.col("adj_close").shift(-i) / pl.col("adj_close")) - 1
-                    for i in range(21, config.processing.trade_days_year)
-                ]
-            )
-        )
-        .over("tic")
-        .alias("max_return_4Q")
+        pl.max_horizontal(
+            [
+                (pl.col("adj_close").shift(-i) / pl.col("adj_close")) - 1
+                for i in range(21, config.processing.trade_days_year)
+            ]
+        ).over("tic").alias("max_return_4Q"),
+
+        # Get minimum return over next 128 days
+        pl.min_horizontal(
+            [
+                (pl.col("adj_close").shift(-i) / pl.col("adj_close")) - 1
+                for i in range(5, config.processing.trade_days_semester)
+            ]
+        ).over("tic").alias("min_return_2Q")
     )
 
     return df.collect()
@@ -1177,37 +1181,37 @@ def compute_cross_sectional_features(df: pl.DataFrame) -> pl.DataFrame:
     return df
 
 
-def filter_sp500_membership(df: pl.DataFrame) -> pl.DataFrame:
+def filter_sp500_constituents(df: pl.DataFrame, info: pl.DataFrame) -> pl.DataFrame:
     """
-    Filter observations to approximate SP500 membership using relative market cap.
+    Filter observations to approximate SP500 membership using relative market cap
+    and historical records.
     """
     df = df.sort(["tic", "tdq"])
     df = df.with_columns(
         pl.col("mkt_cap")
-         .rank("ordinal", descending=True)
-         .over("tdq")
-         .alias("mkt_cap_rank")
+            .rank("ordinal", descending=True)
+            .over("tdq")
+            .alias("mkt_cap_rank")
     )
-    df = df.filter((pl.col("mkt_cap_rank") <= 550))
-    return df
+    df = df.filter((pl.col("mkt_cap_rank") <= 560))
+    df = df.join(info.select(["tic", "date_added", "date_removed"]), on="tic", how="left")
+    df = df.filter(
+        (pl.col("date_added").is_null() | (pl.col("tdq") >= pl.col("date_added"))) &
+        (pl.col("date_removed").is_null() | (pl.col("tdq") <= pl.col("date_removed")))
+    )
+    return df.drop(["date_added", "date_removed"]).sort(["tic", "tdq"])
 
 
 def compute_performance_targets(df: pl.DataFrame) -> pl.DataFrame:
     """
     Compute target forward performance ratios with financial health.
+    These are set in config for training the models.
     """
     df = df.sort(["tic", "tdq"])
     df = df.with_columns(
         # Forward volatility for risk adjustment
         pl.col("vol_yoy").shift(-4).over("tic").alias("fwd_vol_yoy"),
         pl.col("downside_vol_yoy").shift(-4).over("tic").alias("fwd_downside_vol_yoy"),
-
-        # Forward financial metrics (4Q ahead)
-        pl.col("roa").shift(-4).over("tic").alias("fwd_roa"),
-        pl.col("niq").shift(-4).over("tic").alias("fwd_niq"),
-        pl.col("ni_ttm").shift(-4).over("tic").alias("fwd_ni_ttm"),
-        pl.col("fcf_ttm").shift(-4).over("tic").alias("fwd_fcf_ttm"),
-        pl.col("der").shift(-4).over("tic").alias("fwd_der")
     )
 
     df = df.with_columns(
@@ -1215,7 +1219,7 @@ def compute_performance_targets(df: pl.DataFrame) -> pl.DataFrame:
         (pl.col("max_return_4Q") / pl.col("fwd_vol_yoy").mul(np.sqrt(252))).alias("risk_return_4Q"),
 
         # Sortino ratio
-        (pl.col("fwd_return_4Q") / pl.col("fwd_downside_vol_yoy").mul(np.sqrt(252)))
+        (pl.col("max_return_4Q") / pl.col("fwd_downside_vol_yoy").mul(np.sqrt(252)))
         .alias("sortino_4Q"),
 
         # Excess return
@@ -1232,26 +1236,25 @@ def compute_performance_targets(df: pl.DataFrame) -> pl.DataFrame:
         (pl.col("fwd_return_2Q") * 100).alias("fwd_return_2Q"),
         (pl.col("fwd_return_4Q") * 100).alias("fwd_return_4Q"),
         (pl.col("max_return_4Q") * 100).alias("max_return_4Q"),
+        (pl.col("min_return_2Q") * 100).alias("min_return_2Q")
     )
 
     df = df.with_columns(
-        # Aggressive hits using maximum return (prev best max_return_4Q > 40)
-        (pl.col("max_return_4Q") > 40)
+        # Aggressive reward with min draw-down (max_return_4Q > 40 & min_return_2Q > -20)
+        ((pl.col("max_return_4Q") > 40) & (pl.col("min_return_2Q") > -20))
             .cast(pl.Int8)
             .alias("aggressive_hit"),
 
-        # Moderate risk-reward (prev best sharpe_ratio_4Q > 0.3)
-        ((pl.col("risk_return_4Q") > 1.6))
+        # Moderate reward (max_return_4Q > 40)
+        ((pl.col("max_return_4Q") > 40))
             .cast(pl.Int8)
-            .alias("moderate_hit")
-    )
+            .alias("moderate_hit"),
 
-    # Log hit rates for monitoring
-    hit_rates = df.select(
-        pl.col("aggressive_hit").mean().alias("aggressive_rate"),
-        pl.col("moderate_hit").mean().alias("moderate_rate")
+        # Relaxed mid-long term reward with min draw-down (fwd_return_4Q > 25 & min_return_2Q > -20)
+        ((pl.col("fwd_return_4Q") > 25) & (pl.col("min_return_2Q") > -20))
+            .cast(pl.Int8)
+            .alias("relaxed_hit"),
     )
-    logger.info(f"Target hit rates: {hit_rates}")
 
     return df
 
@@ -1269,23 +1272,18 @@ def compute_sector_dummies(df: pl.DataFrame) -> pl.DataFrame:
     return df
 
 
-def filter_active_stocks(df: pl.DataFrame, info: pl.DataFrame) -> pl.DataFrame:
+def log_hit_rates(df: pl.DataFrame) -> None:
     """
-    Filter out stocks that are not active by removing data points after their removal date.
+    Log hit rates for each target.
 
     Parameters
     ----------
     df : pl.DataFrame
-        Main dataset.
-    info : pl.DataFrame
-        Stock info containing addition and removal dates.
-
-    Returns
-    -------
-    pl.DataFrame
-        Filtered dataset with only active periods for each stock.
+        Dataframe with target columns.
     """
-    df = df.join(info.select(["tic", "date_added", "date_removed"]), on="tic", how="left")
-    df = df.filter((pl.col("date_removed").is_null() | (pl.col("tdq") <= pl.col("date_removed"))))
-    df = df.drop(["date_added", "date_removed"])
-    return df.sort(["tic", "tdq"])
+    hit_rates = df.select(
+        pl.col("aggressive_hit").mean().alias("aggressive_rate"),
+        pl.col("moderate_hit").mean().alias("moderate_rate"),
+        pl.col("relaxed_hit").mean().alias("relaxed_rate")
+    )
+    logger.info(f"Target hit rates: {hit_rates}")
