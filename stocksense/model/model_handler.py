@@ -105,7 +105,7 @@ class ModelHandler:
         target : str
             Target variable to optimize model for.
         """
-        optimizer = OptunaOptimizer(n_trials=500)
+        optimizer = OptunaOptimizer()
         best_solution = optimizer.optimize(
             train,
             features,

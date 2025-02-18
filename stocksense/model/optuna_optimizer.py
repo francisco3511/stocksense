@@ -43,8 +43,8 @@ class OptunaOptimizer:
 
         sampler = optuna.samplers.TPESampler(
             n_startup_trials=n_startup,
-            multivariate=True,
-            group=True,
+            multivariate=False,
+            group=False,
             constant_liar=False,
 
         )
@@ -110,9 +110,9 @@ class OptunaOptimizer:
 
             params = {
                 'learning_rate': trial.suggest_float('learning_rate', 0.01, 0.4, log=True),
-                'n_estimators': trial.suggest_int('n_estimators', 100, 800, step=100),
+                'n_estimators': trial.suggest_int('n_estimators', 100, 600, step=100),
                 'max_depth': trial.suggest_int('max_depth', 3, 8),
-                'min_child_weight': trial.suggest_float('min_child_weight', 1e-3, 6.0),
+                'min_child_weight': trial.suggest_float('min_child_weight', 1e-3, 7.0),
                 'gamma': trial.suggest_float('gamma', 1e-3, 1.0, log=True),
                 'subsample': trial.suggest_float('subsample', 0.5, 1.0),
                 'colsample_bytree': trial.suggest_float('colsample_bytree', 0.5, 1.0),

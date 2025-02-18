@@ -59,12 +59,12 @@ class PortfolioBuilder:
                 stock_info.select(["tic", "name", "sector"]), on="tic", how="left"
             )
 
-            portfolio = self._filter_candidates(scored_stocks).head(50)
+            portfolio = self._filter_candidates(scored_stocks)
 
             if self.weighting == "equal":
                 weights = self._equal_weight(portfolio)
             elif self.weighting == "market_cap":
-                weights = self._market_cap_weight(portfolio, score_weight=0.4)
+                weights = self._market_cap_weight(portfolio, score_weight=0.7)
             elif self.weighting == "sector_neutral":
                 weights = self._sector_neutral_weight(portfolio, trade_date)
             else:
@@ -101,9 +101,9 @@ class PortfolioBuilder:
             Filtered portfolio.
         """
         return df.filter(
-            (pl.col("saleq_yoy") > -20) &
+            (pl.col("saleq_yoy") > -30) &
             (pl.col("price_mom") > -25) &
-            (pl.col("avg_score") > 60)
+            (pl.col("avg_score") > 80)
         )
 
     def _equal_weight(self, portfolio: pl.DataFrame) -> np.ndarray:
