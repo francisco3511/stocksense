@@ -125,7 +125,7 @@ def main():
     st.sidebar.page_link("home.py", label="Home", icon="🏠")
     st.sidebar.page_link("pages/overview.py", label="Market Overview", icon="🌎")
     st.sidebar.page_link("pages/analytics.py", label="Stock Analytics", icon="📈")
-    st.sidebar.page_link("pages/insights.py", label="Stock Picks", icon="🔮")
+    st.sidebar.page_link("pages/insights.py", label="Stock Picks", icon="💼")
     st.sidebar.divider()
 
     data = load_sp500_data()

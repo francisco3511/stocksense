@@ -194,31 +194,52 @@ class PortfolioBuilder:
             Trade date.
         """
         excel_path = self.portfolios_dir / f"portfolio_{trade_date.date()}.xlsx"
+
+        # Convert to pandas once and rename columns
+        portfolio_pd = portfolio.rename({
+            "tic": "Ticker",
+            "name": "Company",
+            "sector": "Sector",
+            "adj_close": "Strike Price ($)",
+            "mkt_cap": "Market Cap ($M)",
+            "avg_score": "Model Score",
+            "weight": "Weight",
+            "max_return_4Q": "Max Return 1Y",
+            "fwd_return_4Q": "Forward Return 1Y"
+        }, strict=False).to_pandas()
+
+        # Format numeric columns
+        portfolio_pd["Weight"] = portfolio_pd["Weight"].map("{:.2%}".format)
+        portfolio_pd["Model Score"] = portfolio_pd["Model Score"].round(2)
+        portfolio_pd["Market Cap ($M)"] = portfolio_pd["Market Cap ($M)"].round(2)
+        portfolio_pd["Strike Price ($)"] = portfolio_pd["Strike Price ($)"].round(1)
+        if "Max Return 1Y" in portfolio_pd.columns:
+            portfolio_pd["Max Return 1Y"] = portfolio_pd["Max Return 1Y"].round(2)
+            portfolio_pd["Forward Return 1Y"] = portfolio_pd["Forward Return 1Y"].round(2)
+
         with pd.ExcelWriter(excel_path, engine="openpyxl") as writer:
             # Sheet 1: Full Portfolio
-            portfolio_df = portfolio.sort("weight", descending=True).to_pandas()
-            portfolio_df["weight"] = portfolio_df["weight"].map("{:.2%}".format)
-            portfolio_df["avg_score"] = portfolio_df["avg_score"].round(2)
-            portfolio_df["mkt_cap"] = portfolio_df["mkt_cap"].round(2)
-            portfolio_df["adj_close"] = portfolio_df["adj_close"].round(1)
-            if "max_return_4Q" in portfolio_df.columns:
-                portfolio_df["max_return_4Q"] = portfolio_df["max_return_4Q"].round(2)
-                portfolio_df["fwd_return_4Q"] = portfolio_df["fwd_return_4Q"].round(2)
-            portfolio_df.to_excel(writer, sheet_name="Full Portfolio", index=False)
+            portfolio_pd.sort_values("Weight", ascending=False).to_excel(
+                writer, sheet_name="Full Portfolio", index=False
+            )
 
             # Sheet 2: Sector Allocations
+            # Create a copy of the dataframe before formatting weights for aggregation
+            portfolio_numeric = portfolio_pd.copy()
+            portfolio_numeric["Weight"] = portfolio_pd["Weight"].str.rstrip('%').astype(float) / 100
+
             sector_alloc = (
-                portfolio.group_by("sector")
-                .agg(pl.col("weight").sum())
-                .sort("weight", descending=True)
-                .to_pandas()
+                portfolio_numeric.groupby("Sector")["Weight"]
+                .sum()
+                .reset_index()
+                .sort_values("Weight", ascending=False)
             )
-            sector_alloc["weight"] = sector_alloc["weight"].map("{:.2%}".format)
+            sector_alloc["Weight"] = sector_alloc["Weight"].map("{:.2%}".format)
             sector_alloc.to_excel(writer, sheet_name="Sector Allocations", index=False)
 
             # Sheet 3: Top Holdings
-            top_positions = portfolio.sort("weight", descending=True).head(5).to_pandas()
-            top_positions["weight"] = top_positions["weight"].map("{:.2%}".format)
+            # Use original dataframe with formatted weights
+            top_positions = portfolio_pd.sort_values("Weight", ascending=False).head(5)
             top_positions.to_excel(writer, sheet_name="Top Holdings", index=False)
 
         logger.info(f"Portfolio saved to {excel_path}")

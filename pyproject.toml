@@ -32,7 +32,8 @@ dependencies = [
     "shap",
     "pre-commit",
     "pydantic",
-    "openpyxl"
+    "openpyxl",
+    "optuna"
 ]
 
 [project.optional-dependencies]
