@@ -94,10 +94,9 @@ class ETL:
         for tic in last_constituents:
             if tic not in current_constituents:
                 if tic in removals_list:
-                    removed_date = dt.datetime.strptime(
-                        removals.filter(pl.col("name_removed") == tic)["removed"].to_list()[0],
-                        "%Y-%m-%d",
-                    ).date()
+                    removed_date = removals.filter(pl.col("tic") == tic)["removed"].to_list()[0]
+                    if isinstance(removed_date, str):
+                        removed_date = dt.datetime.strptime(removed_date, "%Y-%m-%d").date()
                     self.db.update_stock(tic, {"date_removed": removed_date})
                 else:
                     today = dt.datetime.now().date()
