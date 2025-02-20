@@ -5,7 +5,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 
-This project implements an intelligent dynamic stock selection system using **Optuna-optimized XGBoost** (Optuna-XGBoost) ensemble models to identify stocks with potential market outperformance in the medium to long term. The model analyzes quarterly financial statements, market data, insider trading patterns and other external data to rank and select stocks that will outperform the S&P 500 index over a one-year horizon. The project includes a **Streamlit-based analytics dashboard** that provides comprehensive stock analysis tools, including technical indicators, financial metrics visualization, and model-driven insights.
+This project implements an intelligent dynamic stock selection system based on **GA and Optuna optimized XGBoost** ensemble models to identify stocks with potential market outperformance in the medium to long term. The model analyzes quarterly financial statements, market data, insider trading patterns and other external data to rank and select stocks that will outperform the S&P 500 index over a one-year horizon. The project includes a **Streamlit-based analytics dashboard** that provides comprehensive stock analysis tools, including technical indicators, financial metrics visualization, and model-driven insights.
 
 
 ## Table of Contents
@@ -36,15 +36,15 @@ The core engine combines three key components:
      - Company-specific growth metrics
      - Macroeconomic indicators
 
-2. **ML-Powered Stock Selection**
+2. **Dynamic Stock Selection**
    - Quarterly Investment Cycle:
      - Four trading dates per year aligned with earnings seasons
      - Automated data refresh and feature engineering on each date
      - Model retraining with expanding window of historical data
 
    - Stock Scoring Process:
-     - Optuna-XGBoost classifier generates outperformance probabilities
-     - Stocks ranked by probability of beating S&P 500 over next 12 months
+     - Optuna-XGBoost classifiers generate outperformance probabilities according to three different strategies (aggressive, moderate, conservative outperformance)
+     - S&P500 stocks are ranked by probability percentiles and dynamically ensembled together to form a final score, according to market conditions
      - Feature importance analysis for investment decision transparency
      - Portfolio rebalancing recommendations based on new scores
 
