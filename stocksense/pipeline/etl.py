@@ -7,13 +7,10 @@ import polars as pl
 from loguru import logger
 from tqdm import tqdm
 
-from stocksense.config import ConfigManager
+from stocksense.config import DATA_DIR, ConfigManager
 from stocksense.database import DatabaseHandler
 
 from .scraper import Scraper
-
-PACKAGE_DIR = Path(__file__).parents[1]
-DATA_PATH = PACKAGE_DIR / "data"
 
 
 class ETL:
@@ -28,7 +25,7 @@ class ETL:
         self.db_schema: dict = config.database.db_schema
         self.base_date: str = config.scraping.base_date
         self.fin_source: str = "yfinance"
-        self.historical_data_path: Path = DATA_PATH / "interim"
+        self.historical_data_path: Path = DATA_DIR / "interim"
         self._update_index_listings()
         self.stocks: list[str] = stocks or self._set_default_stocks()
 
@@ -358,7 +355,7 @@ class ETL:
         )
 
         logger.info(f"Restoring market data for {delisted_stocks}")
-        prices_file = DATA_PATH / "raw" / "prices_2005-01-01_2018-12-31.csv"
+        prices_file = DATA_DIR / "raw" / "prices_2005-01-01_2018-12-31.csv"
 
         with open(prices_file) as f:
             data_types = f.readline().strip().split(',')[1:]
@@ -411,11 +408,7 @@ class ETL:
         """
         Ingest historical stock data stored in .csv files.
         """
-
-        # read snapshot of S&P500 constituents and store in stocks info table
         self._ingest_stock_list()
-
-        # iterate over stock historical and ingest it
         base_folder = self.historical_data_path / "company_data"
         for stock_folder in os.listdir(base_folder):
             stock_path = base_folder / stock_folder

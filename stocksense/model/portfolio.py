@@ -1,11 +1,11 @@
 import datetime as dt
-from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import polars as pl
 from loguru import logger
 
+from stocksense.config import PORTFOLIO_DIR
 from stocksense.database import DatabaseHandler
 
 
@@ -30,7 +30,6 @@ class PortfolioBuilder:
         """
         self.weighting = weighting
         self.db = DatabaseHandler()
-        self.portfolios_dir = Path(__file__).parents[2] / "reports" / "portfolios"
 
     def build_portfolio(
         self, n_stocks: int, trade_date: dt.datetime, data: pl.DataFrame
@@ -193,7 +192,7 @@ class PortfolioBuilder:
         trade_date : dt.datetime
             Trade date.
         """
-        excel_path = self.portfolios_dir / f"portfolio_{trade_date.date()}.xlsx"
+        excel_path = PORTFOLIO_DIR / f"portfolio_{trade_date.date()}.xlsx"
 
         # Convert to pandas once and rename columns
         portfolio_pd = portfolio.rename({

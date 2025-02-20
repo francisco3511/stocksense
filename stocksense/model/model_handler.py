@@ -1,13 +1,12 @@
 import datetime as dt
 import warnings
-from pathlib import Path
 from typing import List, Optional
 
 import numpy as np
 import polars as pl
 from loguru import logger
 
-from stocksense.config import config
+from stocksense.config import MODEL_DIR, SCORES_DIR, config
 
 from .optuna_optimizer import OptunaOptimizer
 from .utils import (
@@ -17,9 +16,6 @@ from .utils import (
     validate_trade_date,
 )
 from .xgboost_model import XGBoostClassifier
-
-MODEL_DIR = Path(__file__).parents[1] / "model" / "model_base"
-REPORT_DIR = Path(__file__).parents[2] / "reports" / "scores"
 
 warnings.filterwarnings("ignore")
 
@@ -186,7 +182,7 @@ class ModelHandler:
             DataFrame containing ranks for each target and average rank.
         """
         try:
-            report_file = REPORT_DIR / f"scores_{self.trade_date.date()}.csv"
+            report_file = SCORES_DIR / f"scores_{self.trade_date.date()}.csv"
             rank_data.write_csv(report_file)
             logger.success(f"SAVED scoring report to {report_file}")
         except Exception as e:

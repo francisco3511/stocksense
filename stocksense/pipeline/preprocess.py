@@ -1,5 +1,4 @@
 import datetime as dt
-from pathlib import Path
 
 import numpy as np
 import polars as pl
@@ -8,9 +7,6 @@ from loguru import logger
 
 from stocksense.config import config
 from stocksense.database import DatabaseHandler
-
-DATA_PATH = Path(__file__).parents[1] / "data"
-FIXTURE_PATH = Path(__file__).parents[2] / "tests" / "fixtures"
 
 
 def engineer_features() -> pl.DataFrame:

@@ -1,15 +1,11 @@
 import datetime as dt
-from pathlib import Path
 
 import pandas as pd
 import plotly.express as px
 import streamlit as st
 
+from stocksense.config import PORTFOLIO_DIR
 from stocksense.database import DatabaseHandler
-
-REPORTS_DIR = Path(__file__).parents[3] / "reports"
-SCORES_DIR = REPORTS_DIR / "scores"
-PORTFOLIOS_DIR = REPORTS_DIR / "portfolios"
 
 
 @st.cache_data(show_spinner="Loading stock data...", max_entries=10)
@@ -22,7 +18,7 @@ def get_available_portfolios():
     """
     Get all available portfolio files.
     """
-    portfolio_files = list(PORTFOLIOS_DIR.glob("portfolio_*.xlsx"))
+    portfolio_files = list(PORTFOLIO_DIR.glob("portfolio_*.xlsx"))
     dates = [dt.datetime.strptime(f.stem.split("_")[1], "%Y-%m-%d").date() for f in portfolio_files]
     return sorted(dates, reverse=True)
 
@@ -31,7 +27,7 @@ def load_portfolio(trade_date):
     """
     Load portfolio for a specific trade date.
     """
-    portfolio_file = PORTFOLIOS_DIR / f"portfolio_{trade_date}.xlsx"
+    portfolio_file = PORTFOLIO_DIR / f"portfolio_{trade_date}.xlsx"
     if not portfolio_file.exists():
         st.error(f"No portfolio found for trade date {trade_date}")
         return None

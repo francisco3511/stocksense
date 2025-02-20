@@ -1,11 +1,9 @@
 import sqlite3
-from pathlib import Path
 from sqlite3 import Error
 
 from loguru import logger
 
-PACKAGE_DIR = Path(__file__).parents[1]
-DATABASE_PATH = PACKAGE_DIR / "data/database/stock_db.db"
+from stocksense.config import DATABASE_PATH
 
 
 class DatabaseConnection:

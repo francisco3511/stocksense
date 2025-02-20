@@ -158,12 +158,12 @@ cython_debug/
 .vscode/
 
 # Data
-**/data/cache/*
-**/data/raw/*
-**/data/interim/*
-**/data/processed/*
-**/data/database/*
-**/data/tests/*
+data/cache/*
+data/raw/*
+data/interim/*
+data/processed/*
+data/database/*
+data/tests/*
 old/
 log/
 
