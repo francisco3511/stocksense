@@ -25,14 +25,15 @@ class PortfolioBuilder:
             Number of stocks to include in portfolio
         weighting : str
             Weighting scheme ('equal', 'market_cap', or 'sector_neutral')
-        sector_constraints : Dict[str, Tuple[float, float]], optional
-            Min/max allocation constraints per sector
         """
         self.weighting = weighting
         self.db = DatabaseHandler()
 
     def build_portfolio(
-        self, n_stocks: int, trade_date: dt.datetime, data: pl.DataFrame
+        self,
+        n_stocks: int,
+        trade_date: dt.datetime,
+        data: pl.DataFrame
     ) -> pl.DataFrame:
         """
         Build portfolio based on model predictions.
@@ -110,7 +111,9 @@ class PortfolioBuilder:
         return np.ones(len(portfolio)) / len(portfolio)
 
     def _sector_neutral_weight(
-        self, portfolio: pl.DataFrame, trade_date: dt.datetime
+        self,
+        portfolio: pl.DataFrame,
+        trade_date: dt.datetime
     ) -> np.ndarray:
         """
         Sector-neutral weighting scheme.
@@ -138,10 +141,8 @@ class PortfolioBuilder:
             .count()
             .with_columns((pl.col("count") / pl.col("count").sum()).alias("sector_weight"))
         )
-
         portfolio_sectors = portfolio.group_by("sector").count()
         sector_weights = {}
-
         for sector in portfolio_sectors["sector"]:
             sector_target = sp500_sectors.filter(pl.col("sector") == sector)["sector_weight"][0]
             sector_count = portfolio_sectors.filter(pl.col("sector") == sector)["count"][0]
@@ -168,16 +169,13 @@ class PortfolioBuilder:
         np.ndarray
             Blended weights
         """
-        # Calculate market cap component
         market_caps = portfolio["mkt_cap"].to_numpy()
         mkt_weights = market_caps / market_caps.sum()
 
-        # Convert scores to weights
         scores = portfolio["avg_score"].to_numpy()
         normalized_scores = (scores - scores.min()) / (scores.max() - scores.min())
         score_weights = normalized_scores / normalized_scores.sum()
 
-        # Blend the weights
         final_weights = (1 - score_weight) * mkt_weights + score_weight * score_weights
         return final_weights / final_weights.sum()
 
@@ -193,8 +191,6 @@ class PortfolioBuilder:
             Trade date.
         """
         excel_path = PORTFOLIO_DIR / f"portfolio_{trade_date.date()}.xlsx"
-
-        # Convert to pandas once and rename columns
         portfolio_pd = portfolio.rename({
             "tic": "Ticker",
             "name": "Company",
@@ -207,7 +203,6 @@ class PortfolioBuilder:
             "fwd_return_4Q": "Forward Return 1Y"
         }, strict=False).to_pandas()
 
-        # Format numeric columns
         portfolio_pd["Weight"] = portfolio_pd["Weight"].map("{:.2%}".format)
         portfolio_pd["Model Score"] = portfolio_pd["Model Score"].round(2)
         portfolio_pd["Market Cap ($M)"] = portfolio_pd["Market Cap ($M)"].round(2)
@@ -223,10 +218,8 @@ class PortfolioBuilder:
             )
 
             # Sheet 2: Sector Allocations
-            # Create a copy of the dataframe before formatting weights for aggregation
             portfolio_numeric = portfolio_pd.copy()
             portfolio_numeric["Weight"] = portfolio_pd["Weight"].str.rstrip('%').astype(float) / 100
-
             sector_alloc = (
                 portfolio_numeric.groupby("Sector")["Weight"]
                 .sum()
@@ -237,7 +230,6 @@ class PortfolioBuilder:
             sector_alloc.to_excel(writer, sheet_name="Sector Allocations", index=False)
 
             # Sheet 3: Top Holdings
-            # Use original dataframe with formatted weights
             top_positions = portfolio_pd.sort_values("Weight", ascending=False).head(5)
             top_positions.to_excel(writer, sheet_name="Top Holdings", index=False)
 

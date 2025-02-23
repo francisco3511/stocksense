@@ -66,7 +66,7 @@ def get_train_val_splits(
         last_val_quarter = max(val_quarters)
         val_idx = quarters.index(last_val_quarter)
 
-        # Add 7 to skip: 4Q validation period + 3Q gap (total 4Q gap )
+        # Add 7 to skip: 4Q validation period + 3Q gap (total 4Q gap)
         train_start_idx = val_idx + 7
         train_end_idx = min(train_start_idx + max_train_years * 4, len(quarters))
         train_quarters = quarters[train_start_idx:train_end_idx]

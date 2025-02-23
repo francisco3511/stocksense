@@ -604,7 +604,6 @@ def compute_market_features(df: pl.DataFrame, market_df: pl.DataFrame) -> pl.Dat
         .pipe(compute_technical_features)
     )
 
-    # Join with main dataset
     df = (
         df.sort(by=["tdq", "tic"])
         .join_asof(
@@ -817,7 +816,6 @@ def compute_price_growth_features(df: pl.DataFrame) -> pl.DataFrame:
         Market data with momementum features.
     """
     df = df.sort(by=["tic", "date"])
-
     df = df.with_columns(
         (pl.col("close") > pl.col("close").rolling_max(252).over("tic"))
         .cast(pl.Int8)
@@ -864,33 +862,33 @@ def compute_technical_features(df: pl.DataFrame) -> pl.DataFrame:
     """
     df = df.sort(["tic", "date"])
     df = df.with_columns(
-        [
-            # RSI / EMA indicators
-            plta.rsi(pl.col("close"), timeperiod=14).over("tic").alias("rsi_14d"),
-            plta.rsi(pl.col("close"), timeperiod=30).over("tic").alias("rsi_30d"),
-            plta.rsi(pl.col("close"), timeperiod=60).over("tic").alias("rsi_60d"),
-            plta.rsi(pl.col("close"), timeperiod=90).over("tic").alias("rsi_90d"),
-            plta.ema(pl.col("close"), timeperiod=20).over("tic").alias("ema_20d"),
-            plta.ema(pl.col("close"), timeperiod=50).over("tic").alias("ema_50d"),
-            plta.ema(pl.col("close"), timeperiod=200).over("tic").alias("ema_200d"),
-        ]
+        # RSI / EMA indicators
+        plta.rsi(pl.col("close"), timeperiod=14).over("tic").alias("rsi_14d"),
+        plta.rsi(pl.col("close"), timeperiod=30).over("tic").alias("rsi_30d"),
+        plta.rsi(pl.col("close"), timeperiod=60).over("tic").alias("rsi_60d"),
+        plta.rsi(pl.col("close"), timeperiod=90).over("tic").alias("rsi_90d"),
+        plta.ema(pl.col("close"), timeperiod=20).over("tic").alias("ema_20d"),
+        plta.ema(pl.col("close"), timeperiod=50).over("tic").alias("ema_50d"),
+        plta.ema(pl.col("close"), timeperiod=200).over("tic").alias("ema_200d"),
     )
-    return df.with_columns(
-        [
-            # Moving Average Crossovers
-            (pl.col("ema_20d") > pl.col("ema_50d")).cast(pl.Int8).alias("golden_cross_20_50"),
-            (pl.col("ema_50d") > pl.col("ema_200d")).cast(pl.Int8).alias("golden_cross_50_200"),
-            # Price Distance from Moving Averages
-            ((pl.col("close") - pl.col("ema_20d")) / pl.col("ema_20d")).alias("ma20_distance"),
-            ((pl.col("close") - pl.col("ema_50d")) / pl.col("ema_50d")).alias("ma50_distance"),
-            # Momentum Divergence
-            (pl.col("rsi_14d") < 30).cast(pl.Int8).alias("oversold"),
-            (pl.col("rsi_14d") > 70).cast(pl.Int8).alias("overbought"),
-            # Price Trend Features
-            (pl.col("close") > pl.col("ema_20d")).cast(pl.Int8).alias("above_ma20"),
-            (pl.col("close") > pl.col("ema_50d")).cast(pl.Int8).alias("above_ma50"),
-        ]
+    df = df.with_columns(
+        # Moving Average Crossovers
+        (pl.col("ema_20d") > pl.col("ema_50d")).cast(pl.Int8).alias("golden_cross_20_50"),
+        (pl.col("ema_50d") > pl.col("ema_200d")).cast(pl.Int8).alias("golden_cross_50_200"),
+
+        # Price Distance from Moving Averages
+        ((pl.col("close") - pl.col("ema_20d")) / pl.col("ema_20d")).alias("ma20_distance"),
+        ((pl.col("close") - pl.col("ema_50d")) / pl.col("ema_50d")).alias("ma50_distance"),
+
+        # Momentum Divergence
+        (pl.col("rsi_14d") < 30).cast(pl.Int8).alias("oversold"),
+        (pl.col("rsi_14d") > 70).cast(pl.Int8).alias("overbought"),
+
+        # Price Trend Features
+        (pl.col("close") > pl.col("ema_20d")).cast(pl.Int8).alias("above_ma20"),
+        (pl.col("close") > pl.col("ema_50d")).cast(pl.Int8).alias("above_ma50")
     )
+    return df
 
 
 def compute_hybrid_features(df: pl.DataFrame) -> pl.DataFrame:
@@ -910,10 +908,8 @@ def compute_hybrid_features(df: pl.DataFrame) -> pl.DataFrame:
     df = df.sort(by=["tic", "tdq"])
     df = (
         df.with_columns(
-            # Relative Momentum features
-            (((pl.col("close") - pl.col("rdq_close")) / pl.col("rdq_close")) * 100).alias(
-                "earn_drift"
-            ),
+            (((pl.col("close") - pl.col("rdq_close")) / pl.col("rdq_close")) * 100)
+            .alias("earn_drift"),
             (pl.col("price_mom") / pl.col("index_mom")).alias("momentum_month"),
             (pl.col("price_qoq") / pl.col("index_qoq")).alias("momentum_quarter"),
             (pl.col("price_yoy") / pl.col("index_yoy")).alias("momentum_year"),
@@ -947,30 +943,43 @@ def compute_hybrid_features(df: pl.DataFrame) -> pl.DataFrame:
 def compute_industry_features(df: pl.DataFrame, info: pl.DataFrame) -> pl.DataFrame:
     """
     Add industry-relative metrics
+
+    Parameters
+    ----------
+    df : pl.DataFrame
+        Main dataset.
+    info : pl.DataFrame
+        Stock information.
+
+    Returns
+    -------
+    pl.DataFrame
+        Dataset with industry-relative metrics.
     """
     df = df.sort(by=["tic", "tdq"])
     df = df.join(info.select(["tic", "sector"]), on="tic", how="left")
     df = df.filter(pl.col("sector").is_in(config.processing.sectors))
-
     return df.with_columns(
-        [
-            # Industry Relative Ratios
-            (pl.col("pe") / pl.col("pe").mean().over(["tdq", "sector"])).alias("pe_sec"),
-            # Industry Momentum
-            pl.col("price_yoy").mean().over(["tdq", "sector"]).alias("momentum_sec_yoy"),
-            pl.col("price_qoq").mean().over(["tdq", "sector"]).alias("momentum_sec_qoq"),
-            # Industry Concentration
-            pl.col("mkt_cap").sum().over(["tdq", "sector"]).alias("size_sec"),
-            # Size
-            (pl.col("mkt_cap") > pl.col("mkt_cap").median().over(["tdq", "sector"]))
-            .cast(pl.Int8)
-            .alias("size_factor"),
-            (pl.col("mkt_cap") / pl.col("mkt_cap").sum().over(["tdq", "sector"]) * 100).alias(
-                "mkt_rel_sec"
-            ),
-            # Relative Profitability (quality factor)
-            (pl.col("roa") - pl.col("roa").mean().over(["tdq", "sector"])).alias("roa_sec"),
-        ]
+        # Industry Relative Ratios
+        (pl.col("pe") / pl.col("pe").mean().over(["tdq", "sector"])).alias("pe_sec"),
+
+        # Industry Momentum
+        pl.col("price_yoy").mean().over(["tdq", "sector"]).alias("momentum_sec_yoy"),
+        pl.col("price_qoq").mean().over(["tdq", "sector"]).alias("momentum_sec_qoq"),
+
+        # Industry Concentration
+        pl.col("mkt_cap").sum().over(["tdq", "sector"]).alias("size_sec"),
+
+        # Size
+        (pl.col("mkt_cap") > pl.col("mkt_cap").median().over(["tdq", "sector"]))
+        .cast(pl.Int8)
+        .alias("size_factor"),
+        (pl.col("mkt_cap") / pl.col("mkt_cap").sum().over(["tdq", "sector"]) * 100).alias(
+            "mkt_rel_sec"
+        ),
+
+        # Relative Profitability (quality factor)
+        (pl.col("roa") - pl.col("roa").mean().over(["tdq", "sector"])).alias("roa_sec")
     )
 
 
@@ -1013,11 +1022,9 @@ def compute_growth_features(df: pl.DataFrame) -> pl.DataFrame:
     pl.DataFrame
         Data with additional growth ratio columns.
     """
-
     quarter_lag = 1
     year_lag = 4
     two_year_lag = 8
-
     metrics = {
         "niq": [quarter_lag, year_lag, two_year_lag],
         "saleq": [year_lag, two_year_lag],
@@ -1046,8 +1053,6 @@ def compute_growth_features(df: pl.DataFrame) -> pl.DataFrame:
     }
 
     expressions = []
-
-    # Add standard growth calculations
     df = df.sort(by=["tic", "tdq"])
     for metric, periods in metrics.items():
         for period in periods:
@@ -1069,40 +1074,49 @@ def compute_piotroski_score(df: pl.DataFrame) -> pl.DataFrame:
         7. No new shares issued (1 point)
         8. Increase in gross margin (1 point)
         9. Increase in asset turnover (1 point)
+
+    Parameters
+    ----------
+    df : pl.DataFrame
+        Financial data of a given stock.
+
+    Returns
+    -------
+    pl.DataFrame
+        Dataset with Piotroski F-Score components.
     """
     df = df.with_columns(
-        [
-            # Profitability Signals (4 points)
-            (pl.col("roa") > 0).cast(pl.Int8).alias("f_roa"),
-            (pl.col("oancfq") > 0).cast(pl.Int8).alias("f_ocf"),
-            (pl.col("roa") > pl.col("roa").shift(4)).over("tic").cast(pl.Int8).alias("f_droa"),
-            (pl.col("oancfq").rolling_sum(4) / pl.col("atq") > pl.col("roa"))
-            .over("tic")
-            .cast(pl.Int8)
-            .alias("f_accrual"),
-            # Leverage, Liquidity, and Source of Funds (3 points)
-            (pl.col("ltq") < pl.col("ltq").shift(4)).over("tic").cast(pl.Int8).alias("f_dlever"),
-            (pl.col("cr") > pl.col("cr").shift(4)).over("tic").cast(pl.Int8).alias("f_dliquid"),
-            (pl.col("cshoq") <= pl.col("cshoq").shift(4)).over("tic").cast(pl.Int8).alias("f_dshr"),
-            # Operating Efficiency (2 points)
-            (pl.col("gpm") > pl.col("gpm").shift(4)).over("tic").cast(pl.Int8).alias("f_dgm"),
-            (pl.col("atr") > pl.col("atr").shift(4)).over("tic").cast(pl.Int8).alias("f_dturn"),
-        ]
+        # Profitability Signals (4 points)
+        (pl.col("roa") > 0).cast(pl.Int8).alias("f_roa"),
+        (pl.col("oancfq") > 0).cast(pl.Int8).alias("f_ocf"),
+        (pl.col("roa") > pl.col("roa").shift(4)).over("tic").cast(pl.Int8).alias("f_droa"),
+        (pl.col("oancfq").rolling_sum(4) / pl.col("atq") > pl.col("roa"))
+        .over("tic")
+        .cast(pl.Int8)
+        .alias("f_accrual"),
+
+        # Leverage, Liquidity, and Source of Funds (3 points)
+        (pl.col("ltq") < pl.col("ltq").shift(4)).over("tic").cast(pl.Int8).alias("f_dlever"),
+        (pl.col("cr") > pl.col("cr").shift(4)).over("tic").cast(pl.Int8).alias("f_dliquid"),
+        (pl.col("cshoq") <= pl.col("cshoq").shift(4)).over("tic").cast(pl.Int8).alias("f_dshr"),
+
+        # Operating Efficiency (2 points)
+        (pl.col("gpm") > pl.col("gpm").shift(4)).over("tic").cast(pl.Int8).alias("f_dgm"),
+        (pl.col("atr") > pl.col("atr").shift(4)).over("tic").cast(pl.Int8).alias("f_dturn")
+
     ).with_columns(
-        [
-            # Total F-Score (sum of all components)
-            (
-                pl.col("f_roa")
-                + pl.col("f_ocf")
-                + pl.col("f_droa")
-                + pl.col("f_accrual")
-                + pl.col("f_dlever")
-                + pl.col("f_dliquid")
-                + pl.col("f_dshr")
-                + pl.col("f_dgm")
-                + pl.col("f_dturn")
-            ).alias("f_score")
-        ]
+        # Total F-Score (sum of all components)
+        (
+            pl.col("f_roa")
+            + pl.col("f_ocf")
+            + pl.col("f_droa")
+            + pl.col("f_accrual")
+            + pl.col("f_dlever")
+            + pl.col("f_dliquid")
+            + pl.col("f_dshr")
+            + pl.col("f_dgm")
+            + pl.col("f_dturn")
+        ).alias("f_score")
     )
     component_cols = [
         "f_roa",
@@ -1121,19 +1135,26 @@ def compute_piotroski_score(df: pl.DataFrame) -> pl.DataFrame:
 def compute_cross_sectional_features(df: pl.DataFrame) -> pl.DataFrame:
     """
     Add cross-sectional features, handling NaN values properly.
+
+    Parameters
+    ----------
+    df : pl.DataFrame
+        Main dataset.
+
+    Returns
+    -------
+    pl.DataFrame
+        Dataset with cross-sectional features.
     """
 
     df = df.sort(["tic", "tdq"])
-
-    # Basic rankings
     rank_metrics = [
-        "pe", "ev_ebitda", "saleq_yoy", "roa", "fcf_ttm", "der", "price_mom", "price_yoy"
+        "pe", "ev_ebitda", "saleq_yoy",
+        "roa", "fcf_ttm", "der", "price_mom", "price_yoy"
     ]
-
     for metric in rank_metrics:
         df = df.with_columns(pl.col(metric).replace(float("inf"), float("nan")).alias(metric))
         df = df.with_columns(
-
             # Overall deciles
             (
                 pl.when(pl.col(metric).is_nan())
@@ -1181,6 +1202,18 @@ def filter_sp500_constituents(df: pl.DataFrame, info: pl.DataFrame) -> pl.DataFr
     """
     Filter observations to approximate SP500 membership using relative market cap
     and historical records.
+
+    Parameters
+    ----------
+    df : pl.DataFrame
+        Main dataset.
+    info : pl.DataFrame
+        Stock information.
+
+    Returns
+    -------
+    pl.DataFrame
+        Dataset with SP500 membership.
     """
     df = df.sort(["tic", "tdq"])
     df = df.with_columns(
@@ -1202,6 +1235,16 @@ def compute_performance_targets(df: pl.DataFrame) -> pl.DataFrame:
     """
     Compute target forward performance ratios with financial health.
     These are set in config for training the models.
+
+    Parameters
+    ----------
+    df : pl.DataFrame
+        Main dataset.
+
+    Returns
+    -------
+    pl.DataFrame
+        Dataset with performance targets.
     """
     df = df.sort(["tic", "tdq"])
     df = df.with_columns(
@@ -1246,7 +1289,7 @@ def compute_performance_targets(df: pl.DataFrame) -> pl.DataFrame:
             .cast(pl.Int8)
             .alias("moderate_hit"),
 
-        # Relaxed mid-long term reward with min draw-down (fwd_return_4Q > 25 & min_return_2Q > -20)
+        # Relaxed mid-long term reward with min draw-down
         ((pl.col("fwd_return_4Q") > 25) & (pl.col("min_return_2Q") > -20))
             .cast(pl.Int8)
             .alias("relaxed_hit"),
@@ -1258,6 +1301,16 @@ def compute_performance_targets(df: pl.DataFrame) -> pl.DataFrame:
 def compute_sector_dummies(df: pl.DataFrame) -> pl.DataFrame:
     """
     Compute sector dummies.
+
+    Parameters
+    ----------
+    df : pl.DataFrame
+        Main dataset.
+
+    Returns
+    -------
+    pl.DataFrame
+        Dataset with sector dummy variables.
     """
     df = df.sort(["tic", "tdq"])
     df = df.to_dummies(columns=["sector"])
