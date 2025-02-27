@@ -213,7 +213,7 @@ class PortfolioBuilder:
 
         with pd.ExcelWriter(excel_path, engine="openpyxl") as writer:
             # Sheet 1: Full Portfolio
-            portfolio_pd.sort_values("Weight", ascending=False).to_excel(
+            portfolio_pd.to_excel(
                 writer, sheet_name="Full Portfolio", index=False
             )
 

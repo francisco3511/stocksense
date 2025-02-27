@@ -16,12 +16,13 @@ def run():
         initial_sidebar_state="expanded",
     )
     st.sidebar.title("Stocksense App")
+    st.sidebar.divider()
     st.sidebar.success("Select page")
 
     st.sidebar.page_link("home.py", label="Home", icon="🏠")
     st.sidebar.page_link("pages/overview.py", label="Market Overview", icon="🌎")
     st.sidebar.page_link("pages/analytics.py", label="Stock Analytics", icon="📈")
-    st.sidebar.page_link("pages/insights.py", label="Stock Picks", icon="💼")
+    st.sidebar.page_link("pages/insights.py", label="Portfolio Insights", icon="💼")
     st.sidebar.divider()
 
     st.header("Welcome to Stocksense Analytics App!")

@@ -160,19 +160,17 @@ class ModelHandler:
                 perc_cols.append(f"perc_{target}")
 
 
-            final_ranks = final_ranks.with_columns(
+            scored_data = final_ranks.with_columns(
                 pl.mean_horizontal([pl.col(col) for col in perc_cols]).round(2).alias("avg_score")
             ).sort("avg_score", descending=True)
 
-            report_cols = ["tic", "adj_close", "max_return_4Q", "fwd_return_4Q", "avg_score"]
-            self._save_scoring_report(final_ranks.select(report_cols + pred_cols))
-
-            return final_ranks
+            self._save_scoring_report(scored_data)
+            return scored_data
         except Exception as e:
             logger.error(f"ERROR: failed to score stocks - {e}")
             raise
 
-    def _save_scoring_report(self, rank_data: pl.DataFrame) -> None:
+    def _save_scoring_report(self, scored_data: pl.DataFrame) -> None:
         """
         Save scoring report csv with ranks for each target and average rank.
 
@@ -183,7 +181,13 @@ class ModelHandler:
         """
         try:
             report_file = SCORES_DIR / f"scores_{self.trade_date.date()}.csv"
-            rank_data.write_csv(report_file)
+            base_cols = [
+                "tic", "adj_close", "avg_index_fwd_return_4Q",
+                "max_return_4Q", "fwd_return_4Q", "avg_score"
+            ]
+            pred_cols = [col for col in scored_data.columns if col.startswith("pred_")]
+            report_data = scored_data.select(base_cols + pred_cols)
+            report_data.write_csv(report_file)
             logger.success(f"SAVED scoring report to {report_file}")
         except Exception as e:
             logger.error(f"ERROR failed to save scoring report - {e}")
